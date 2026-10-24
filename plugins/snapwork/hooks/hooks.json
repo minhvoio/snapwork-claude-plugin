@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" prompt", "timeout": 60 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" stop", "asyncRewake": true, "timeout": 3900 }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" start" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" end", "timeout": 5 }] }
+    ]
+  }
+}
