@@ -1,7 +1,7 @@
 {
   "name": "snapwork",
   "displayName": "snapwork",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Join a snapwork space by pasting its invitation link in the chat. Messages for you arrive by themselves after each turn.",
   "author": {
     "name": "snapwork",

@@ -677,6 +677,29 @@ run_cx prompt "$(cx_prompt "$C1" "$CX1" "$P4" '@snapwork:source-command-send-to-
 has "Codex: the skill made from the Claude command works" "sent to the space \"Codex space H\""
 check "the log notes the command, never its text" 'grep -q "command-send form=slash" "$SW/plugin.log" && grep -q "send-asked" "$SW/plugin.log" && ! grep -q "finish the fix\|summarise the fix" "$SW/plugin.log"'
 
+echo "== 21. the invitation as the ChatGPT app sends it: a Markdown link"
+ROOM_M=15151515-0000-4000-8000-00000000000f
+echo "kfr-mmmm-0001|$ROOM_M|Markdown space M" >> "$T/fake/spaces"
+C21=01a171a2-56e9-7881-86fe-e9ca50710021
+CX21=$T/tx/rollout-$C21.jsonl
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\n' "$C21" "$P4" > "$CX21"
+run_cx prompt "$(cx_prompt "$C21" "$CX21" "$P4" "[click here](${LINK}kfr-mmmm-0001)")"
+has "a link with other text is not the invitation alone" "paste the invitation link on its own"
+run_cx prompt "$(cx_prompt "$C21" "$CX21" "$P4" "[${LINK}kfr-mmmm-0001](${LINK}kfr-hhhh-0001)")"
+lacks "text and target must be the same invitation" "joined"
+run_cx prompt "$(cx_prompt "$C21" "$CX21" "$P4" "[${LINK}kfr-mmmm-0001](${LINK}kfr-mmmm-0001) please")"
+lacks "nothing after the link" "joined"
+reset_calls
+run_cx prompt "$(cx_prompt "$C21" "$CX21" "$P4" "[${LINK}kfr-mmmm-0001](${LINK}kfr-mmmm-0001)")"
+has "a Markdown link alone joins" "you just joined the space \"Markdown space M\""
+called "join call" "join kfr-mmmm-0001"
+check "the log names the form" 'grep -q "invite-form=markdown" "$SW/plugin.log"'
+S21=21212121-aaaa-4000-8000-000000000021
+reset_calls
+run prompt "$(prompt "$S21" "$(transcript "$S21")" "$P3" "<${LINK}kfr-mmmm-0001/>")"
+has "angle brackets join too (Claude)" "already in the space\|you just joined"
+check "angle brackets: looked up or joined" 'grep -q "kfr-mmmm-0001" "$T/fake/calls"'
+
 echo "== 14. the diagnostic log"
 check "log exists" '[ -f "$SW/plugin.log" ]'
 check "log mode 600" '[ "$(ls -l "$SW/plugin.log" | cut -c 1-10)" = "-rw-------" ]'

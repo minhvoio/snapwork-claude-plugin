@@ -638,6 +638,30 @@ command_of() {
   return 1
 }
 
+# invite_alone <message without white space> <code>: the message is only this invitation: the link
+# (with or without https://), in angle brackets, or as a Markdown link whose text and target are
+# both the link (the ChatGPT app sends a pasted address as [link](link)). Sets INVITE_FORM.
+INVITE_FORM=
+invite_alone() {
+  m=$1
+  INVITE_FORM=plain
+  case $m in '<'*'>') m=${m#<}; m=${m%>}; INVITE_FORM=angle ;; esac
+  case $m in
+    '['*']('*')')
+      inner=${m#\[}
+      label=${inner%%"]("*}
+      target=${inner#*"]("}
+      INVITE_FORM=markdown
+      is_link "$label" "$2" && is_link "${target%)}" "$2"
+      return ;;
+  esac
+  is_link "$m" "$2"
+}
+is_link() {
+  case $1 in "$LINK$2" | "$LINK$2/" | "${LINK#https://}$2" | "${LINK#https://}$2/") return 0 ;; esac
+  return 1
+}
+
 # ---- events ----
 on_prompt() {
   text=$(printf '%s' "$INPUT" | grep -o '"prompt"[[:space:]]*:[[:space:]]*"[^"]*' | head -n 1 | sed 's/^"prompt"[[:space:]]*:[[:space:]]*"//')
@@ -664,9 +688,10 @@ on_prompt() {
   fi
   if [ -n "$code" ]; then
     case $bare in
-      "$LINK$code" | "$LINK$code/") kind=invite ;;
-      "/fork$LINK$code" | "/fork$LINK$code/") kind=forkinvite ;;
+      /fork*) if invite_alone "${bare#/fork}" "$code"; then kind=forkinvite; fi ;;
+      *) if invite_alone "$bare" "$code"; then kind=invite; fi ;;
     esac
+    case $kind in invite | forkinvite) [ "$INVITE_FORM" = plain ] || plog "invite-form=$INVITE_FORM" ;; esac
   fi
   case $kind in
     invite)
@@ -686,9 +711,7 @@ on_prompt() {
       if [ -n "$code" ]; then
         # Only the command and the invitation: a link inside other text never joins.
         tail_bare=$(printf '%s' "$CMD_TAIL" | sed 's/\\[nrt]//g' | tr -d ' \t')
-        case $tail_bare in
-          "$LINK$code" | "$LINK$code/") on_invite "$code" ;;
-        esac
+        if invite_alone "$tail_bare" "$code"; then on_invite "$code"; fi
         plog "link-inside-text"
         printf 'SnapWork: to join this space, paste the invitation link on its own, with nothing else in the message. Tell the person this in one line; do not join it yourself.\n'
         exit 0
