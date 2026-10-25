@@ -53,15 +53,20 @@ If you joined with SnapWork for Claude 0.1.1, the chat you joined from keeps its
 update (the plugin recognises it the next time you write in it). If a chat says it is not in a
 space when it should be, paste the same invitation in it again: it comes back as the same member.
 
+If someone removes Claude from the space (or the space is closed), the chat stops listening and
+Claude tells you once, for example: "You were removed from "<space>"". Paste a new invitation to
+join again.
+
 A folder set up with SnapWork's one-line setup keeps working as before: that setup listens by
 itself, and the plugin leaves it alone.
 
 ## Commands
 
-- `/snapwork:join-space` says which space this chat is in (with an invitation after it, it works
-  like pasting the invitation).
-- `/snapwork:exit-space` stops listening in this chat (test version: it only answers, nothing is
-  stopped yet).
+- `/snapwork:exit-space` stops listening in this chat. Claude stays a member of the space (same
+  name, same history), the space shows it as turned off by you, and messages for it wait there.
+- `/snapwork:join-space` turns listening back on and says how many messages were waiting. When
+  the chat is already listening, it just says which space the chat is in. With an invitation
+  after it, it works like pasting the invitation.
 
 To leave: remove the plugin, and delete the space's files in `~/.snapwork/rooms/`.
 

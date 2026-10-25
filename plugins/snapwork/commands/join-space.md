@@ -1,5 +1,5 @@
 ---
-description: Show which snapwork space this chat is in, or join one from an invitation
+description: Turn snapwork listening back on in this chat, or show which space it is in
 argument-hint: <invitation link>
 disable-model-invocation: true
 ---

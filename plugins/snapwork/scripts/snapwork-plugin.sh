@@ -47,6 +47,8 @@ LOG_KEEP_LINES=200
 NAME_MAX=60
 CODE_MAX=64
 FRESH_FORK_MINUTES=10
+TRANSCRIPT_SCAN_BYTES=4194304
+API_SECONDS=15
 NL='
 '
 
@@ -108,6 +110,15 @@ CWD=$(input_field cwd)
 [ -n "$CWD" ] || CWD=$PWD
 CWD=$(cd -- "$CWD" 2> /dev/null && pwd -P) || exit 0
 
+# One private temp folder per run, made on first use and removed on exit (also when killed).
+WORK=
+work_dir() {
+  [ -z "$WORK" ] || return 0
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/snapwork.XXXXXX" 2> /dev/null) || { WORK=; return 1; }
+  trap 'rm -rf "$WORK"' EXIT
+  trap 'exit 0' HUP INT TERM
+}
+
 # Diagnostics: only once SnapWork has a folder on this computer; never fails the hook.
 plog() {
   [ -d "$SNAPWORK_HOME" ] || return 0
@@ -124,11 +135,17 @@ plog() {
 }
 
 # ---- is this chat a copy (/fork, /branch, --fork-session)? ----
-# A copy's SessionStart leaves a marker (sessions/<id>: "fork <original id>"); its transcript also
-# carries "forkedFrom":{"sessionId":"<original>"} on every copied message, which works even when
-# the copy's first message arrives before its SessionStart hook ran.
+# Three signals, any one is enough:
+# - Claude Code's SessionStart source "fork" leaves a marker (sessions/<id>: "fork <original id>").
+# - Claude Code's copies carry "forkedFrom":{"sessionId":"<original>"} on every copied message.
+# - Claude Desktop's /fork copy starts with SessionStart source "resume" and no "forkedFrom", but
+#   its copied messages keep the original's "sessionId". A chat's own transcript only ever holds its
+#   own id (resume keeps the id, /clear starts a new file, compaction keeps the id), so another id
+#   in it means a copy; the latest other id is the chat it was copied from.
+# Only the first TRANSCRIPT_SCAN_BYTES of the transcript are read, as data (grep, sed, awk).
 FORK=0
 PARENT=
+PARENTS=
 MARKER=
 [ -z "$SID" ] || MARKER=$SESSIONS/$SID
 detect_fork() {
@@ -145,6 +162,19 @@ detect_fork() {
     fi
   fi
   valid_session "$PARENT" || PARENT=
+  PARENTS=$PARENT
+  [ -n "$TRANSCRIPT" ] && [ -n "$SID" ] || return 0
+  others=$(head -c "$TRANSCRIPT_SCAN_BYTES" "$TRANSCRIPT" 2> /dev/null \
+    | grep -o '"sessionId"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]*"' \
+    | sed 's/.*"\([A-Za-z0-9_-]*\)"$/\1/' \
+    | awk -v own="$SID" '$0 != own { last[$0] = NR } END { for (k in last) print last[k], k }' \
+    | sort -rn | cut -d ' ' -f 2 | head -n 5)
+  for other in $others; do
+    valid_session "$other" || continue
+    FORK=1
+    [ -n "$PARENT" ] || PARENT=$other
+    PARENTS="$PARENTS $other"
+  done
 }
 detect_fork
 # A copy made in the last few minutes (its SessionStart marker is fresh).
@@ -213,18 +243,23 @@ pick() {
   [ -n "$STATE" ]
 }
 
-# Records which chat owns a connection ("" frees it), keeping every other line.
-set_session() {
+# set_line <state> <name> <value>: sets one string field right after "{" ("" removes it), keeping
+# every other line. Names are fixed words; values are ids or digits checked by the caller.
+set_line() {
   st=$1
   { [ -f "$st" ] && [ ! -L "$st" ] && [ "$(head -n 1 "$st")" = "{" ]; } || return 1
-  tmp=$st.$$.tmp
-  if (umask 077 && { printf '{\n'; [ -z "$2" ] || printf '  "session": "%s",\n' "$2"; sed -e '1d' -e '/^[[:space:]]*"session"[[:space:]]*:/d' "$st"; } > "$tmp") \
-    && chmod 600 "$tmp" && mv "$tmp" "$st"; then
+  sttmp=$st.$$.tmp
+  if (umask 077 && { printf '{\n'; [ -z "$3" ] || printf '  "%s": "%s",\n' "$2" "$3"; sed -e '1d' -e "/^[[:space:]]*\"$2\"[[:space:]]*:/d" "$st"; } > "$sttmp") \
+    && chmod 600 "$sttmp" && mv "$sttmp" "$st"; then
     return 0
   fi
-  rm -f "$tmp"
+  rm -f "$sttmp"
   return 1
 }
+# Records which chat owns a connection ("" frees it).
+set_session() { set_line "$1" session "$2"; }
+# Turned off by its person (exit-space): the hooks keep the membership but do not listen.
+is_off() { [ -n "$(field off "$STATE")" ]; }
 
 # Connections saved before plugin 0.1.2 name no chat. The first chat that is not a copy and whose
 # history holds the connection's ids (its join line) claims it; "any" (after /clear) skips the history
@@ -245,9 +280,22 @@ listen() {
   [ "$EVENT" != stop ] || set -- "$@" --rewake
   set -- "$@" --room "$ROOM"
   [ -z "$AGENT" ] || set -- "$@" --agent "$AGENT"
-  # The listener's exit code is the hook's answer (2 wakes Claude), so it must pass through.
-  printf '%s' "$INPUT" | sh "$HOOK" "$@"
-  exit $?
+  # The listener's exit code is the hook's answer (2 wakes Claude), so it must pass through. Its
+  # stderr (the message for an asyncRewake wake) passes through too, after a look for "giving up".
+  work_dir || { printf '%s' "$INPUT" | sh "$HOOK" "$@"; exit $?; }
+  ltmp=$WORK/listener.err
+  printf '%s' "$INPUT" | sh "$HOOK" "$@" 2> "$ltmp"
+  rc=$?
+  # The listener's own last line when SnapWork keeps refusing the key (never room text: a wake
+  # leaves with exit 2). SnapWork is asked once more before the connection is set aside.
+  if [ "$rc" -eq 0 ] && [ -n "$STATE" ] && ! made_by_setup "$STATE" \
+    && grep -q -x -F -e "snapwork-hook: room $ROOM answered 401 three times: giving up (key revoked or room gone?)" \
+      -e "snapwork-hook: room $ROOM answered 403 three times: giving up (key revoked or room gone?)" \
+      -e "snapwork-hook: room $ROOM answered 404 three times: giving up (key revoked or room gone?)" "$ltmp"; then
+    confirm_gone
+  fi
+  cat "$ltmp" >&2
+  exit "$rc"
 }
 
 # ---- texts for Claude (stdout of UserPromptSubmit and SessionStart is added to the conversation) ----
@@ -279,6 +327,10 @@ back_text() {
 }
 bound_text() {
   [ "$FORK" -eq 0 ] || printf 'This chat is a copy of another chat; only this copy is in the space below. '
+  if is_off; then
+    printf 'SnapWork: this chat is a member of the space "%s" as "%s", turned off by its person: SnapWork does not wake it and messages for it wait in the space. Only when the person types /snapwork:join-space does it listen again. Do not post in the space until then.\n' "$(space_of "$STATE")" "$(agent_of "$STATE")"
+    return 0
+  fi
   printf 'You are a member of the SnapWork space "%s" as "%s" in this chat. Messages for you arrive automatically after you end a turn. When SnapWork asks you to say hello, reply the same way as any message. ' "$(space_of "$STATE")" "$(agent_of "$STATE")"
   reply_text
 }
@@ -286,9 +338,11 @@ bound_text() {
 ORIGIN_SPACE=
 origin_space() {
   ORIGIN_SPACE=
-  [ -n "$PARENT" ] || return 0
+  [ -n "$PARENTS" ] || return 0
   keep_room=$ROOM keep_agent=$AGENT keep_state=$STATE
-  if pick bound "$PARENT"; then ORIGIN_SPACE=$(space_of "$STATE"); fi
+  for parent in $PARENTS; do
+    if pick bound "$parent"; then ORIGIN_SPACE=$(space_of "$STATE"); break; fi
+  done
   ROOM=$keep_room AGENT=$keep_agent STATE=$keep_state
 }
 copy_text() {
@@ -317,8 +371,8 @@ join() {
   umask 077
   mkdir -p "$ROOMS" || fail "cannot create $ROOMS"
   chmod 700 "$SNAPWORK_HOME" "$ROOMS" 2> /dev/null
-  jtmp=$(mktemp -d 2> /dev/null) || fail "mktemp failed"
-  trap 'rm -rf "$jtmp"' EXIT
+  work_dir || fail "mktemp failed"
+  jtmp=$WORK
   folder=$(basename "$CWD" | tr -d '"\\' | tr -d '[:cntrl:]')
   name=$(printf '%s' "${SNAPWORK_NAME:-Claude}" | tr -d '"\\' | tr -d '[:cntrl:]' | cut -c 1-60)
   attempt=1
@@ -487,9 +541,7 @@ on_prompt() {
         exit 0
       fi
       if pick bound || try_adopt; then
-        plog "status-in-space"
-        printf 'SnapWork: this chat is in the space "%s" as "%s"; messages for you arrive by themselves after each turn. Tell the person this in one line.\n' \
-          "$(space_of "$STATE")" "$(agent_of "$STATE")"
+        join_space_status
       elif pick setup; then
         plog "status-setup"
         printf 'SnapWork: this chat is in no space of its own; this folder is in the space "%s" as "%s" through the SnapWork setup, which listens for it by itself. Tell the person this in one line.\n' \
@@ -500,14 +552,9 @@ on_prompt() {
       fi
       exit 0 ;;
     exitcmd)
-      if pick bound || try_adopt; then
-        plog "exit-stub-in-space"
-        printf 'SnapWork: exit-space reached the plugin (test only: nothing was stopped; this chat still listens in "%s" as "%s").\n' \
-          "$(space_of "$STATE")" "$(agent_of "$STATE")"
-      else
-        plog "exit-stub-none"
-        printf 'SnapWork: exit-space reached the plugin (test only: this chat is in no space, so there is nothing to stop).\n'
-      fi
+      if pick bound || try_adopt; then exit_space; fi
+      plog "exit-none"
+      printf 'SnapWork: this chat is in no space, so there is nothing to stop. Tell the person this in one line.\n'
       exit 0 ;;
   esac
   if [ -n "$code" ]; then
@@ -515,7 +562,11 @@ on_prompt() {
     printf 'SnapWork: to join this space, paste the invitation link on its own, with nothing else in the message. Tell the person this in one line; do not join it yourself.\n'
     exit 0
   fi
-  if pick bound || try_adopt; then plog "check"; listen UserPromptSubmit; fi
+  if pick bound || try_adopt; then
+    if is_off; then plog "off"; exit 0; fi
+    plog "check"
+    listen UserPromptSubmit
+  fi
   # A folder set up by the one-line setup: its Stop hook listens; this asks once, as before.
   if pick setup; then listen UserPromptSubmit; fi
   exit 0
@@ -543,7 +594,11 @@ on_start() {
 }
 
 on_stop() {
-  if pick bound || try_adopt; then plog "listen"; listen Stop; fi
+  if pick bound || try_adopt; then
+    if is_off; then plog "off"; exit 0; fi
+    plog "listen"
+    listen Stop
+  fi
   exit 0
 }
 
@@ -554,9 +609,12 @@ on_end() {
     set_session "$STATE" "" && plog "free-for-clear"
     exit 0
   fi
+  is_off && exit 0
   plog "away"
   listen SessionEnd
 }
+
+. "$HERE/snapwork-onoff.sh" || exit 0
 
 case $EVENT in
   prompt) on_prompt ;;

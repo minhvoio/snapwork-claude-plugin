@@ -52,7 +52,7 @@ session_in() { sed -n 's/^  "session": "\(.*\)",$/\1/p' "$1"; }
 # run <event> <json>: the hook as Claude Code runs it (stdin JSON), output in $T/out, code in $T/rc.
 run() {
   printf '%s' "$2" | env HOME="$HOMEDIR" SNAPWORK_HOME="$SW" PATH="$T/bin:$PATH" FAKE_DIR="$T/fake" \
-    SNAPWORK_LISTEN_SECONDS=0 SNAPWORK_BACKOFF_BASE_S=1 ${TEST_SH:-sh} "$PLUGIN" "$1" > "$T/out" 2> "$T/err"
+    SNAPWORK_LISTEN_SECONDS=${LISTEN_S:-0} SNAPWORK_BACKOFF_BASE_S=1 ${TEST_SH:-sh} "$PLUGIN" "$1" > "$T/out" 2> "$T/err"
   echo $? > "$T/rc"
 }
 # A transcript; "fork <original>" makes it a copy's, "names <id>" puts an id in it.
@@ -214,8 +214,14 @@ run prompt "$(prompt "$S1" "$TX1" "$P1" "/snapwork:join-space")"
 has "join-space names A" "this chat is in the space \"spike-A, Mr. O'Neil (throwaway)\" as \"Claude\""
 run prompt "$(prompt "$S2" "$TX2" "$P1" "/snapwork:join-space")"
 has "join-space in the copy names B" "this chat is in the space \"spike B (throwaway)\""
+touch "$T/fake/old"
+reset_calls
 run prompt "$(prompt "$S1" "$TX1" "$P1" "/snapwork:exit-space")"
-has "exit-space names A" "still listens in \"spike-A, Mr. O'Neil (throwaway)\""
+has "exit-space on a gateway without the route: not available" "turning off is not available yet"
+has "and names A" "still listens in \"spike-A, Mr. O'Neil (throwaway)\""
+called "it asked the gateway" "stop $ROOM_A"
+check "nothing marked off" '! grep -q "\"off\"" "$ST_A"'
+rm -f "$T/fake/old"
 reset_calls
 run prompt "$(prompt "$S1" "$TX1" "$P1" "/snapwork:join-space ${LINK}kfr-cccc-0001")"
 has "join-space with another space's link: fork hint" "type /fork followed by the invitation"
@@ -282,12 +288,126 @@ run prompt "$(prompt "$S10" "$TX10" "$P3" "${LINK}kfr-zzzz-0001")"
 has "same invitation as the setup: already in" "through the SnapWork setup"
 check "setup state never gets a session" '! grep -q "\"session\"" "$SW/rooms/$ROOM_S.$SET_AGENT.json"'
 
+echo "== 15. Claude Desktop copies (/fork keeps the original's sessionId on copied lines)"
+S13=13131313-aaaa-4000-8000-000000000013
+S14=14141414-aaaa-4000-8000-000000000014
+TX13=$T/tx/$S13.jsonl
+{
+  printf '{"type":"user","sessionId":"%s","message":{"content":"hi"}}\n' "$S2" "$S2" "$S2"
+  printf '{"type":"assistant","sessionId":"%s","message":{"content":"--room %s"}}\n' "$S2" "$ROOM_B"
+  printf '{"type":"user","sessionId":"%s","message":{"content":"next"}}\n' "$S13"
+} > "$TX13"
+run start "$(start "$S13" "$TX13" "$P1" resume)"
+has "Desktop copy told it is a copy (source resume)" "this chat is a copy of another chat and is in no SnapWork space"
+has "and which space the original is in" "the original chat stays in \"spike B (throwaway)\""
+run stop "$(stop "$S13" "$TX13" "$P1")"
+check "a Desktop copy never listens as the original" '[ "$(session_in "$ST_B")" = "$S2" ]'
+run prompt "$(prompt "$S13" "$TX13" "$P1" "${LINK}kfr-bbbb-0001")"
+has "a Desktop copy cannot take the original's space" "this copy stays out of it"
+check "B still the original's" '[ "$(session_in "$ST_B")" = "$S2" ]'
+cat >> "$T/fake/spaces" << EOF
+kfr-gggg-0001|gggggggg-0000-4000-8000-000000000007|Space G
+EOF
+run prompt "$(prompt "$S13" "$TX13" "$P1" "${LINK}kfr-gggg-0001")"
+has "a Desktop copy joins a new space as a copy of the original" "This chat is a copy of your chat in \"spike B (throwaway)\""
+TX14=$T/tx/$S14.jsonl
+{
+  printf '{"type":"user","sessionId":"%s"}\n' "$S9" "$S9"
+  printf '{"type":"user","sessionId":"%s"}\n' "$S2"
+  printf '{"type":"user","sessionId":"%s"}\n' "$S14"
+} > "$TX14"
+run start "$(start "$S14" "$TX14" "$P1" resume)"
+has "a copy of a copy names the latest chat it came from" "the original chat stays in \"spike B (throwaway)\""
+
+echo "== 16. a removed or refused member"
+reset_calls
+ST_F=$(state_of "$ROOM_F")
+touch "$T/fake/gone_$ROOM_F"
+LISTEN_S=30
+run stop "$(stop "$S8" "$TX8" "$P1")"
+check "the Stop hook wakes Claude once (exit 2)" '[ "$(cat "$T/rc")" = 2 ]'
+if grep -q -F "you were removed from \"Space F\"" "$T/err"; then ok; else bad "removed line on stderr" "$(cat "$T/err")"; fi
+if grep -q -F "Paste a new invitation to join again" "$T/err"; then ok; else bad "says how to come back" "$(cat "$T/err")"; fi
+check "the connection is set aside" '[ ! -e "$ST_F" ] && [ -e "${ST_F%.json}.gone" ]'
+check "the set-aside copy has no key" '! grep -q "\"key\"" "${ST_F%.json}.gone"'
+reset_calls
+run stop "$(stop "$S8" "$TX8" "$P1")"
+check "then the chat stays quiet" '[ "$(cat "$T/rc")" = 0 ] && [ ! -s "$T/fake/calls" ]'
+run prompt "$(prompt "$S8" "$TX8" "$P1" "/snapwork:join-space")"
+has "and is in no space" "this chat is not in a space yet"
+touch "$T/fake/refused_$ROOM_D"
+run prompt "$(prompt "$S4" "$TX4" "$P1" "hi")"
+has "a refused member is told on the next message" "no longer lets this chat's member listen in \"Space D\""
+check "and set aside" '[ -z "$(state_of "$ROOM_D")" ]'
+LISTEN_S=0
+
+echo "== 17. exit-space and join-space with a gateway that has the routes"
+LOCK_B=$SW/rooms/$(basename "$ST_B" .json).listener
+printf '99999 Mon Jan  1 00:00:00 2026\n' > "$LOCK_B"
+reset_calls
+run prompt "$(prompt "$S2" "$TX2" "$P1" "/snapwork:exit-space")"
+has "exit-space stops" "stopped listening in \"spike B (throwaway)\". You are still a member; /snapwork:join-space turns it back on."
+called "stop call" "stop $ROOM_B"
+check "the connection is kept and marked off" 'grep -q "\"off\": \"1792000000000\"" "$ST_B" && grep -q "\"key\"" "$ST_B"'
+check "the running listener is told to leave" '[ "$(cat "$LOCK_B")" = "0 off" ]'
+reset_calls
+run stop "$(stop "$S2" "$TX2" "$P1")"
+check "an off chat does not listen" '[ "$(cat "$T/rc")" = 0 ] && [ ! -s "$T/fake/calls" ]'
+run prompt "$(prompt "$S2" "$TX2" "$P1" "hello")"
+check "nor checks on a message" '[ ! -s "$T/fake/calls" ]'
+run start "$(start "$S2" "$TX2" "$P1" resume)"
+has "a new start says it is off" "turned off by its person"
+run prompt "$(prompt "$S2" "$TX2" "$P1" "/snapwork:exit-space")"
+has "a second exit-space: already off" "already stopped listening in \"spike B (throwaway)\""
+touch "$T/fake/proxy404"
+run prompt "$(prompt "$S2" "$TX2" "$P1" "/snapwork:join-space")"
+has "an HTML 404 in front of SnapWork changes nothing" "could not turn listening back on"
+check "still marked off and still saved" 'grep -q "\"off\"" "$ST_B"'
+rm -f "$T/fake/proxy404"
+echo 3 > "$T/fake/waiting"
+reset_calls
+run prompt "$(prompt "$S2" "$TX2" "$P1" "/snapwork:join-space")"
+has "join-space turns it back on" "listening again in \"spike B (throwaway)\" as \"Claude\"; 3 messages were waiting"
+called "start call" "start $ROOM_B"
+check "no longer marked off" '! grep -q "\"off\"" "$ST_B"'
+reset_calls
+run stop "$(stop "$S2" "$TX2" "$P1")"
+called "listens again" "hook $ROOM_B"
+touch "$T/fake/off_$ROOM_B"
+echo 1 > "$T/fake/waiting"
+run prompt "$(prompt "$S2" "$TX2" "$P1" "/snapwork:join-space")"
+has "off at the gateway (email stop link): join-space turns it on" "listening again in \"spike B (throwaway)\" as \"Claude\"; 1 message was waiting"
+run prompt "$(prompt "$S2" "$TX2" "$P1" "/snapwork:join-space")"
+has "listening: join-space says so" "as \"Claude\" and listens"
+touch "$T/fake/pending_$ROOM_C"
+run prompt "$(prompt "$S3" "$TX3" "$P1" "/snapwork:exit-space")"
+has "pending: nothing to turn off yet" "nothing to turn off yet"
+run prompt "$(prompt "$S3" "$TX3" "$P1" "/snapwork:join-space")"
+has "pending: join-space says it is being added" "SnapWork is still adding it"
+rm -f "$T/fake/pending_$ROOM_C"
+
+echo "== 18. join-space on a gateway without the routes, after an off from before"
+ST_C=$(state_of "$ROOM_C")
+python3 - "$ST_C" << 'EOF'
+import sys
+p = sys.argv[1]
+lines = open(p).read().split("\n")
+open(p, "w").write("\n".join([lines[0], '  "off": "1",'] + lines[1:]))
+EOF
+touch "$T/fake/old"
+run prompt "$(prompt "$S3" "$TX3" "$P1" "/snapwork:join-space")"
+has "listens again locally" "listening again in \"Space C\""
+check "off cleared" '! grep -q "\"off\"" "$ST_C"'
+rm -f "$T/fake/old"
+check "keys never on a command line" '! grep -q KEY-IN-ARGV "$T/fake/calls"'
+
 echo "== 14. the diagnostic log"
 check "log exists" '[ -f "$SW/plugin.log" ]'
 check "log mode 600" '[ "$(ls -l "$SW/plugin.log" | cut -c 1-10)" = "-rw-------" ]'
 check "log has no invite codes" '! grep -q "kfr-" "$SW/plugin.log"'
 check "log has no keys" '! grep -q -i "testkey\|legacykey\|setupkey" "$SW/plugin.log"'
 check "log has no message text" '! grep -q "what is new\|please join" "$SW/plugin.log"'
+check "log names removed and off" 'grep -q "gone-401" "$SW/plugin.log" && grep -q "exit-off" "$SW/plugin.log" && grep -q "join-on" "$SW/plugin.log"'
 check "log names the fork branch" 'grep -q "start-copy" "$SW/plugin.log" && grep -q "join-copy" "$SW/plugin.log" && grep -q "second-space-fork-hint" "$SW/plugin.log"'
 check "log shows short session ids only" '! grep -q "$S1" "$SW/plugin.log" && grep -q "sid=11111111 " "$SW/plugin.log"'
 check "no state file holds a broken quote" 'for f in "$SW"/rooms/*.json; do python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" || exit 1; done'
