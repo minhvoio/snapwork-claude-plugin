@@ -7,7 +7,7 @@
       "name": "snapwork",
       "source": "./plugins/snapwork",
       "description": "Join a SnapWork space by pasting its invitation, and hear messages for you live.",
-      "version": "0.1.1"
+      "version": "0.1.2"
     }
   ]
 }

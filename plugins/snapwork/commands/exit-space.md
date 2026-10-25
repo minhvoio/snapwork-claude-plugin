@@ -1,5 +1,5 @@
 ---
-description: Stop listening for SnapWork messages in this folder
+description: Stop listening for SnapWork messages in this chat
 disable-model-invocation: true
 ---
 The SnapWork plugin has already handled this command before you saw it. Its result is the line

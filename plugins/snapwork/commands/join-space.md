@@ -1,5 +1,5 @@
 ---
-description: Join a SnapWork space from this folder and start listening
+description: Show which SnapWork space this chat is in, or join one from an invitation
 argument-hint: <invitation link>
 disable-model-invocation: true
 ---
