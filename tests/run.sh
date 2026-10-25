@@ -87,6 +87,7 @@ TX1=$(transcript "$S1")
 echo "== 1. first join (a chat in no space pastes the invitation alone)"
 run prompt "$(prompt "$S1" "$TX1" "$P1" "${LINK}kfr-aaaa-0001")"
 has "first join line" "you just joined the space \"spike-A, Mr. O'Neil (throwaway)\" as \"Claude\""
+lacks "Claude has no Steer" "Steer"
 lacks "first join is not a copy" "copy"
 called "join call" "join kfr-aaaa-0001"
 ST_A=$(state_of "$ROOM_A")
@@ -440,6 +441,7 @@ has "Codex joins by pasting" "you just joined the space \"Codex space H\" as \"C
 has "Codex is told to answer with a snapwork block" 'starts with a line ```snapwork'
 has "and not to run --say" "Do not run curl or snapwork-hook.sh --say yourself"
 has "and to post no block before the hello" "with no snapwork block yet"
+has "the person is told to press Steer to write while it listens" "they send their message and press Steer next to it"
 lacks "no --say command for Codex" "--say --room"
 check "Codex joins as a Codex agent" 'grep -q "\"for\":\"codex\"" "$T/fake/join_body" && grep -q "\"name\":\"Codex\"" "$T/fake/join_body"'
 check "and names its folder" 'grep -q "\"folder\":\"proj4\"" "$T/fake/join_body"'
@@ -566,6 +568,7 @@ run_cx start "$(cx_start "$C1" "$CX1" "$P4" resume)"
 has "start says it is off, Codex skill named" "Only when the owner types \$snapwork:join-space"
 run_cx prompt "$(cx_prompt "$C1" "$CX1" "$P4" '$snapwork:join-space')"
 has "\$snapwork:join-space turns it on" "listening again in \"Codex space H\""
+has "and says to press Steer" "press Steer next to it. Then end your turn."
 run_cx start "$(cx_start "$C1" "$CX1" "$P4" resume)"
 has "start tells a Codex chat to answer with the block" 'starts with a line ```snapwork'
 run_cx prompt "$(cx_prompt "$C1" "$CX1" "$P4" "${LINK}kfr-cccc-0001")"

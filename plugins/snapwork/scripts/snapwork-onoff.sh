@@ -161,8 +161,8 @@ turn_on() {
       body_has '"waiting_more":true' && more=1
       set_line "$STATE" off "" || true
       plog "join-on"
-      printf 'SnapWork: listening again in "%s" as "%s"%s. Messages for you arrive by themselves after you end this turn. Tell the person this in one line, then end your turn.\n' \
-        "$space" "$name" "$(waiting_words "$waiting" "$more")"
+      printf 'SnapWork: listening again in "%s" as "%s"%s. Messages for you arrive by themselves after you end this turn. Tell the person this in one line. %sThen end your turn.\n' \
+        "$space" "$name" "$(waiting_words "$waiting" "$more")" "$(codex_steer_note)"
       exit 0 ;;
   esac
   if key_unknown; then gone 401; fi
@@ -174,7 +174,7 @@ turn_on() {
       # The gateway has no off switch: nothing there is off, so this chat simply listens again.
       set_line "$STATE" off "" || true
       plog "join-on-local"
-      printf 'SnapWork: listening again in "%s" as "%s". Messages for you arrive by themselves after you end this turn. Tell the person this in one line, then end your turn.\n' "$space" "$name"
+      printf 'SnapWork: listening again in "%s" as "%s". Messages for you arrive by themselves after you end this turn. Tell the person this in one line. %sThen end your turn.\n' "$space" "$name" "$(codex_steer_note)"
       exit 0 ;;
   esac
   unreachable_on

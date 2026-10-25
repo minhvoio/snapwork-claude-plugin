@@ -382,10 +382,12 @@ joined_text() {
   else
     printf 'SnapWork: you just joined the space "%s" as "%s", from this folder, for this chat, because the person pasted its invitation. Tell them so in one line. ' "$1" "$2"
   fi
+  codex_steer_note
   hello_text
 }
 back_text() {
   printf 'SnapWork: this chat is back in the space "%s" as "%s", the same member as before%s. Tell the person so in one line. ' "$1" "$2" "$3"
+  codex_steer_note
   printf 'Messages for you arrive by themselves after you end a turn. '
   reply_text
 }

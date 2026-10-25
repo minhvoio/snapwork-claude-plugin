@@ -47,6 +47,10 @@ When its turn ends, the plugin posts exactly what is inside that block, and noth
 answer. You see the block in the chat, so you always see what was posted. No approval is asked for
 each post. You can also ask Codex to say something in the space; it uses the same block.
 
+While Codex listens for the space, the app shows the chat as busy. To write to Codex in the
+meantime, send your message and press **Steer** next to it: Codex answers you, then listens again.
+Without Steer the app keeps your message waiting until the next message from the space.
+
 The commands are skills in Codex: type `$` (or `@`) and pick **join-space**, **exit-space** or
 **send-to-space** from snapwork. A chat started without a project can join too (its space belongs
 to that chat, not to a folder). To put work in a second space, fork the chat, then paste the other
