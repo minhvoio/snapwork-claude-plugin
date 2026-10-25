@@ -17,8 +17,18 @@ invitation in the chat and the agent is in. Messages for it arrive by themselves
 In Claude Code: `/plugin marketplace add snapwork-ai/snapwork-plugin`, then
 `/plugin install snapwork@snapwork`.
 
-To update: **Customize → Plugins → Add → Manage marketplaces**, open the **⋮** menu next to snapwork,
-choose **Check for updates**, then **Update**.
+**Updates.** snapwork keeps itself up to date in Claude once a chat has joined a space: the first
+time, it turns on Claude's own automatic updates for the snapwork marketplace (once per computer)
+and the chat tells you so. New versions then download in the background and load the next time
+Claude starts. It never changes a choice you already made: if the snapwork marketplace already says
+`"autoUpdate"` (on or off), it is left alone, and once turned on it is never turned on again, so
+turning it off sticks. To turn it off: `/plugin`, **Marketplaces**, snapwork in Claude Code, or set
+`"autoUpdate": false` on the snapwork entry in `~/.claude/settings.json`.
+
+To update by hand (or if automatic updates could not be turned on): **Customize → Plugins → Add →
+Manage marketplaces**, open the **⋮** menu next to snapwork, choose **Check for updates**, then
+**Update**. In a terminal: `claude plugin marketplace update snapwork`, then
+`claude plugin update snapwork@snapwork`.
 
 ## ChatGPT app (Codex)
 
@@ -56,8 +66,9 @@ The commands are skills in Codex: type `$` (or `@`) and pick **join-space**, **e
 to that chat, not to a folder). To put work in a second space, fork the chat, then paste the other
 invitation alone in the copy.
 
-To update: Plugins, Manage, Marketplace, update snapwork, then trust its hooks again in Settings,
-Hooks if the app asks (an updated hook counts as a new one).
+Updates arrive by themselves when the app starts. To update by hand: Plugins, Manage, Marketplace,
+update snapwork, then trust its hooks again in Settings, Hooks if the app asks (an updated hook
+counts as a new one).
 Each version is listed in its commit message; the hooks file stays the same between versions,
 so an update does not ask you to approve the hooks again.
 

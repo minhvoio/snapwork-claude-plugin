@@ -51,7 +51,9 @@ session_in() { sed -n 's/^  "session": "\(.*\)",$/\1/p' "$1"; }
 
 # run <event> <json>: the hook as Claude Code runs it (stdin JSON), output in $T/out, code in $T/rc.
 run() {
-  printf '%s' "$2" | env HOME="$HOMEDIR" SNAPWORK_HOME="$SW" PATH="$T/bin:$PATH" FAKE_DIR="$T/fake" \
+  printf '%s' "$2" | env HOME="$HOMEDIR" SNAPWORK_HOME="$SW" PATH="$T/bin:${TPATH:-$PATH}" FAKE_DIR="$T/fake" \
+    CLAUDE_CONFIG_DIR="${CCD:-}" CLAUDE_CODE_PLUGIN_CACHE_DIR="${CPD:-}" FORCE_AUTOUPDATE_PLUGINS= DISABLE_UPDATES= \
+    DISABLE_AUTOUPDATER="${NO_AUTO:-}" CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC= \
     SNAPWORK_LISTEN_SECONDS=${LISTEN_S:-0} SNAPWORK_BACKOFF_BASE_S=1 ${TEST_SH:-sh} "$PLUGIN" "$1" > "$T/out" 2> "$T/err"
   echo $? > "$T/rc"
 }
@@ -234,7 +236,7 @@ reset_calls
 run prompt "$(prompt "$S10" "$TX10" "$HOMEDIR" "${LINK}kfr-cccc-0001")"
 has "home folder refused" "open a project folder first"
 ln -s "$HOMEDIR" "$T/homelink"
-printf '%s' "$(prompt "$S10" "$TX10" "$HOMEDIR" "${LINK}kfr-cccc-0001")" | env HOME="$T/homelink" SNAPWORK_HOME="$SW" PATH="$T/bin:$PATH" FAKE_DIR="$T/fake" ${TEST_SH:-sh} "$PLUGIN" prompt > "$T/out" 2> /dev/null
+printf '%s' "$(prompt "$S10" "$TX10" "$HOMEDIR" "${LINK}kfr-cccc-0001")" | env HOME="$T/homelink" CLAUDE_CONFIG_DIR= CLAUDE_CODE_PLUGIN_CACHE_DIR= SNAPWORK_HOME="$SW" PATH="$T/bin:$PATH" FAKE_DIR="$T/fake" ${TEST_SH:-sh} "$PLUGIN" prompt > "$T/out" 2> /dev/null
 has "home folder refused when HOME is a symlink" "open a project folder first"
 not_called "no join from home" "join kfr-cccc-0001"
 
@@ -406,6 +408,7 @@ echo "== 19. Codex: join by pasting, the reply block, the helper thread"
 # run_cx <event> <json>: the hook as Codex runs it (codex-hooks.json passes "codex").
 run_cx() {
   printf '%s' "$2" | env HOME="$HOMEDIR" SNAPWORK_HOME="$SW" PATH="$T/bin:$PATH" FAKE_DIR="$T/fake" \
+    CLAUDE_CONFIG_DIR="${CCD:-}" CLAUDE_CODE_PLUGIN_CACHE_DIR="${CPD:-}" \
     SNAPWORK_LISTEN_SECONDS=${LISTEN_S:-0} SNAPWORK_BACKOFF_BASE_S=1 SNAPWORK_CODEX_MAX_S=${CX_MAX:-82800} \
     SNAPWORK_CODEX_MIN_ROUND_S=${CX_MIN:-60} ${TEST_SH:-sh} "$PLUGIN" "$1" codex > "$T/out" 2> "$T/err"
   echo $? > "$T/rc"
@@ -720,6 +723,321 @@ touch -t 202001010000 "$SW/sessions/$C21.said"
 reset_calls
 run_cx stop "$(cx_stop "$C21" "$CX21" "$P4" turn-a4 '"```snapwork\nSomething new.\n```"')"
 called "the same text hours later is a new message" "say $ROOM_M"
+
+echo "== 23. Claude's auto-update for the snapwork marketplace: turned on once, and said"
+CL=$HOMEDIR/.claude
+KM=$CL/plugins/known_marketplaces.json
+MARK=$SW/auto-update
+ROOM_U=16161616-0000-4000-8000-000000000010
+ROOM_V=17171717-0000-4000-8000-000000000011
+cat >> "$T/fake/spaces" << EOF
+kfr-uuuu-0001|$ROOM_U|Update space U
+kfr-vvvv-0001|$ROOM_V|Update space V
+EOF
+P6=$HOMEDIR/proj6
+P7=$HOMEDIR/proj7
+mkdir -p "$P6" "$P7"
+CAFE=$(printf 'caf\303\251')
+# settings_with <snapwork entry, or nothing>: a user settings file with other keys and marketplaces.
+settings_with() {
+  mkdir -p "$CL"
+  {
+    printf '{\n  "permissions": {\n    "allow": ["Bash(ls:*)"]\n  },\n  "model": "opus",\n  "note": "%s",\n  "ratio": 1.5,\n' "$CAFE"
+    printf '  "extraKnownMarketplaces": {\n    "ecc": {\n      "source": {\n        "source": "git",\n        "url": "https://github.com/affaan-m/ECC.git"\n      }\n    }'
+    [ -z "$1" ] || printf ',\n    "snapwork": %s' "$1"
+    printf '\n  },\n  "enabledPlugins": {\n    "snapwork@snapwork": true\n  }\n}\n'
+  } > "$CL/settings.json"
+  chmod 640 "$CL/settings.json"
+  cp "$CL/settings.json" "$T/settings.orig"
+}
+# known_with <snapwork entry, or nothing>: Claude's own record of fetched marketplaces.
+known_with() {
+  mkdir -p "$CL/plugins"
+  {
+    printf '{\n  "claude-plugins-official": {\n    "source": {\n      "source": "github",\n      "repo": "anthropics/claude-plugins-official"\n    },\n    "installLocation": "/x/official",\n    "lastUpdated": "2026-10-23T06:47:00.221Z"\n  }'
+    [ -z "$1" ] || printf ',\n  "snapwork": %s' "$1"
+    printf '\n}\n'
+  } > "$KM"
+  cp "$KM" "$T/known.orig"
+}
+SNAP_SRC='{ "source": { "source": "github", "repo": "snapwork-ai/snapwork-plugin" } }'
+SNAP_KNOWN='{ "source": { "source": "github", "repo": "snapwork-ai/snapwork-plugin" }, "installLocation": "/x/snapwork", "lastUpdated": "2026-10-25T01:00:00.000Z" }'
+SNAP_OFF='{ "source": { "source": "github", "repo": "snapwork-ai/snapwork-plugin" }, "autoUpdate": false }'
+SNAP_ON='{ "source": { "source": "github", "repo": "snapwork-ai/snapwork-plugin" }, "autoUpdate": true }'
+# turned_on <file> <original> <settings|known>: the file is the original plus "autoUpdate": true on
+# the snapwork entry, nothing else (other keys, other marketplaces, text outside ASCII).
+turned_on() {
+  python3 - "$1" "$2" "$3" << 'EOF'
+import json, sys
+new = json.load(open(sys.argv[1], encoding="utf-8"))
+old = json.load(open(sys.argv[2], encoding="utf-8"))
+e = new["extraKnownMarketplaces"]["snapwork"] if sys.argv[3] == "settings" else new["snapwork"]
+assert e.pop("autoUpdate") is True
+assert new == old, (new, old)
+EOF
+}
+fresh_start() { rm -f "$MARK"; rm -rf "$CL"; }
+S30=30303030-aaaa-4000-8000-000000000030
+S31=31313131-aaaa-4000-8000-000000000031
+S32=32323232-aaaa-4000-8000-000000000032
+TX32=$(transcript "$S32")
+
+# a first join turns it on in the user settings file, and the chat says so
+fresh_start
+settings_with "$SNAP_SRC"
+known_with "$SNAP_KNOWN"
+run prompt "$(prompt "$S30" "$(transcript "$S30")" "$P6" "${LINK}kfr-uuuu-0001")"
+has "joined U" "you just joined the space \"Update space U\""
+has "the chat tells the person" "SnapWork also turned on automatic updates for the snapwork plugin in Claude (once), so new versions of snapwork arrive by themselves and load the next time Claude starts."
+has "and how to turn it off" "To turn this off: /plugin, then Marketplaces, then snapwork in Claude Code, or set \"autoUpdate\": false on the snapwork entry in ~/.claude/settings.json."
+check "the hook exits 0" '[ "$(cat "$T/rc")" = 0 ]'
+check "settings: only autoUpdate true was added to the snapwork entry" 'turned_on "$CL/settings.json" "$T/settings.orig" settings'
+check "settings: text outside ASCII kept as is" 'grep -q -F "\"note\": \"$CAFE\"" "$CL/settings.json"'
+check "settings: mode kept (640)" '[ "$(ls -l "$CL/settings.json" | cut -c 1-10)" = "-rw-r-----" ]'
+check "settings: backup holds the original bytes" 'cmp -s "$CL/settings.json.snapwork-bak" "$T/settings.orig"'
+check "settings: backup mode 600" '[ "$(ls -l "$CL/settings.json.snapwork-bak" | cut -c 1-10)" = "-rw-------" ]'
+check "known_marketplaces.json untouched when settings has the entry" 'cmp -s "$KM" "$T/known.orig"'
+check "no temp files left" '[ -z "$(ls -A "$CL" | grep "^\.snapwork")" ]'
+check "marker written, mode 600" '[ "$(ls -l "$MARK" | cut -c 1-10)" = "-rw-------" ] && grep -q "^on settings " "$MARK"'
+check "log says it was turned on" 'grep -q "auto-update-on file=settings tool=python3" "$SW/plugin.log"'
+check "the log holds no path or file content" '! grep "auto-update" "$SW/plugin.log" | grep -q "/\|ECC\|opus"'
+
+# never twice: a person who later removes or turns it off is never overridden
+cp "$T/settings.orig" "$CL/settings.json"
+run prompt "$(prompt "$S31" "$(transcript "$S31")" "$P6" "${LINK}kfr-uuuu-0001")"
+has "another chat comes back to U" "is back in the space \"Update space U\""
+lacks "the come-back says nothing about updates" "automatic updates"
+run start "$(start "$S31" "$(transcript "$S31")" "$P6" resume)"
+has "a later start in a space" "You are a member of the SnapWork space"
+lacks "says nothing about updates" "automatic updates"
+check "no second edit" 'cmp -s "$CL/settings.json" "$T/settings.orig"'
+check "log: done before" 'grep -q "auto-update-skip why=done-before" "$SW/plugin.log"'
+
+# a come-back turns it on too (first time on this computer)
+fresh_start
+settings_with "$SNAP_SRC"
+run prompt "$(prompt "$S32" "$TX32" "$P6" "${LINK}kfr-uuuu-0001")"
+has "S32 comes back to U" "is back in the space \"Update space U\""
+has "the come-back says it turned updates on" "SnapWork also turned on automatic updates"
+check "come-back: settings turned on" 'turned_on "$CL/settings.json" "$T/settings.orig" settings'
+
+# a chat already in a space (S32 now): at its next SessionStart
+fresh_start
+settings_with "$SNAP_SRC"
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+has "start in a space says it" "SnapWork also turned on automatic updates"
+check "start: settings turned on" 'turned_on "$CL/settings.json" "$T/settings.orig" settings'
+
+# an explicit choice (false or true, in either file) is left alone, and remembered
+for entry in "$SNAP_OFF" "$SNAP_ON"; do
+  fresh_start
+  settings_with "$entry"
+  run start "$(start "$S32" "$TX32" "$P6" resume)"
+  lacks "an explicit choice: nothing said" "automatic updates"
+  check "an explicit choice: settings untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig"'
+  check "an explicit choice: no backup" '[ ! -e "$CL/settings.json.snapwork-bak" ]'
+  check "an explicit choice is remembered" 'grep -q "^explicit " "$MARK"'
+done
+check "log: explicit" 'grep -q "auto-update-skip why=explicit" "$SW/plugin.log"'
+fresh_start
+settings_with "$SNAP_SRC"
+known_with '{ "source": { "source": "github", "repo": "snapwork-ai/snapwork-plugin" }, "autoUpdate": false }'
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+check "a choice in known_marketplaces.json leaves settings alone" 'cmp -s "$CL/settings.json" "$T/settings.orig" && cmp -s "$KM" "$T/known.orig"'
+
+# no settings entry: the known_marketplaces.json entry gets it
+fresh_start
+settings_with ""
+known_with "$SNAP_KNOWN"
+chmod 664 "$KM"
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+has "known: said" "SnapWork also turned on automatic updates"
+has "known: names that file" "on the snapwork entry in ~/.claude/plugins/known_marketplaces.json."
+check "known: only autoUpdate added" 'turned_on "$KM" "$T/known.orig" known'
+check "known: mode kept (664)" '[ "$(ls -l "$KM" | cut -c 1-10)" = "-rw-rw-r--" ]'
+check "known: backup" 'cmp -s "$KM.snapwork-bak" "$T/known.orig"'
+check "known: settings untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig"'
+check "log: file=known" 'grep -q "auto-update-on file=known" "$SW/plugin.log"'
+
+# neither file: nothing is created, and it is tried again later
+fresh_start
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+lacks "neither: nothing said" "automatic updates"
+check "neither: nothing created" '[ ! -e "$CL" ]'
+check "neither: no marker (tried again later)" '[ ! -e "$MARK" ]'
+check "log: no-entry" 'grep -q "auto-update-skip why=no-entry" "$SW/plugin.log"'
+settings_with ""
+known_with ""
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+check "files without a snapwork entry: untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig" && cmp -s "$KM" "$T/known.orig"'
+
+# malformed JSON: untouched
+fresh_start
+mkdir -p "$CL"
+printf '{\n  "extraKnownMarketplaces": { "snapwork": { "source": {} } },\n' > "$CL/settings.json"
+cp "$CL/settings.json" "$T/settings.orig"
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+lacks "malformed: nothing said" "automatic updates"
+check "malformed: untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig" && [ ! -e "$CL/settings.json.snapwork-bak" ]'
+check "malformed: no marker" '[ ! -e "$MARK" ]'
+check "log: bad-json" 'grep -q "auto-update-skip why=bad-json" "$SW/plugin.log"'
+fresh_start
+settings_with "$SNAP_SRC"
+known_with "[1, 2"
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+check "a malformed known_marketplaces.json (it may hold a choice): settings untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig"'
+
+# a symlinked settings file or folder: untouched
+fresh_start
+settings_with "$SNAP_SRC"
+mv "$CL/settings.json" "$T/real-settings.json"
+ln -s "$T/real-settings.json" "$CL/settings.json"
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+lacks "symlink: nothing said" "automatic updates"
+check "symlink: target untouched" 'cmp -s "$T/real-settings.json" "$T/settings.orig"'
+check "symlink: still a link, no backup" '[ -L "$CL/settings.json" ] && [ ! -e "$CL/settings.json.snapwork-bak" ]'
+check "log: symlink" 'grep -q "auto-update-skip why=symlink" "$SW/plugin.log"'
+fresh_start
+mkdir -p "$T/realclaude"
+CL_KEEP=$CL
+CL=$T/realclaude
+settings_with "$SNAP_SRC"
+CL=$CL_KEEP
+ln -s "$T/realclaude" "$CL"
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+check "a symlinked folder: untouched" 'cmp -s "$T/realclaude/settings.json" "$T/settings.orig" && [ ! -e "$T/realclaude/settings.json.snapwork-bak" ]'
+rm -f "$CL"
+
+# Codex never touches it (it updates itself when the app starts)
+fresh_start
+settings_with "$SNAP_SRC"
+known_with "$SNAP_KNOWN"
+run_cx start "$(cx_start "$C1" "$CX1" "$P4" resume)"
+check "Codex start in a space: untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig" && cmp -s "$KM" "$T/known.orig"'
+lacks "Codex: nothing said" "automatic updates"
+C30=01a171a2-56e9-7881-86fe-e9ca50710030
+CX30=$T/tx/rollout-$C30.jsonl
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\n' "$C30" "$P7" > "$CX30"
+run_cx prompt "$(cx_prompt "$C30" "$CX30" "$P7" "${LINK}kfr-vvvv-0001")"
+has "Codex joins V" "you just joined the space \"Update space V\""
+lacks "Codex join: nothing said" "automatic updates"
+check "Codex join: untouched, no marker" 'cmp -s "$CL/settings.json" "$T/settings.orig" && cmp -s "$KM" "$T/known.orig" && [ ! -e "$MARK" ]'
+
+# the one-line setup's connections never do it
+run start "$(start "$S10" "$TX10" "$P3" resume)"
+check "a setup folder's start: untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig" && [ ! -e "$MARK" ]'
+
+# Claude's update pass is off (DISABLE_AUTOUPDATER): nothing to turn on, nothing said
+NO_AUTO=1
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+NO_AUTO=
+lacks "updates off: nothing said" "automatic updates"
+check "updates off: untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig" && [ ! -e "$MARK" ]'
+
+# CLAUDE_CONFIG_DIR and CLAUDE_CODE_PLUGIN_CACHE_DIR are respected
+fresh_start
+settings_with "$SNAP_SRC"
+CCDIR=$T/ccd
+mkdir -p "$CCDIR"
+cp "$T/settings.orig" "$CCDIR/settings.json"
+CCD=$CCDIR
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+CCD=
+has "config dir: said, naming that file" "on the snapwork entry in $CCDIR/settings.json."
+check "config dir: its settings turned on" 'turned_on "$CCDIR/settings.json" "$T/settings.orig" settings'
+check "config dir: ~/.claude untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig"'
+fresh_start
+CPDIR=$T/cpd
+mkdir -p "$CPDIR"
+known_with "$SNAP_KNOWN"
+mv "$KM" "$CPDIR/known_marketplaces.json"
+CPD=$CPDIR
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+CPD=
+check "plugin cache dir: its known_marketplaces.json turned on" 'turned_on "$CPDIR/known_marketplaces.json" "$T/known.orig" known'
+
+# without python3: node, then bun; with none of them, nothing is changed
+# farm <dir> <names to leave out>: every command on PATH, as links, except those.
+farm() {
+  fd=$1
+  shift
+  mkdir -p "$fd"
+  old_ifs=$IFS
+  IFS=:
+  for pd in $PATH; do
+    [ -d "$pd" ] || continue
+    for fp in "$pd"/*; do
+      fn=${fp##*/}
+      { [ -x "$fp" ] && [ ! -d "$fp" ] && [ ! -e "$fd/$fn" ]; } || continue
+      leave=0
+      for x in "$@"; do case $fn in $x) leave=1 ;; esac; done
+      [ "$leave" -eq 1 ] || ln -s "$fp" "$fd/$fn"
+    done
+  done
+  IFS=$old_ifs
+}
+farm "$T/nopy" 'python*'
+farm "$T/nonode" 'python*' node nodejs
+farm "$T/none" 'python*' node nodejs bun
+for variant in nopy:node nonode:bun; do
+  dir=${variant%%:*}
+  want=${variant#*:}
+  if [ ! -e "$T/$dir/$want" ]; then
+    printf 'skip: no %s on this computer\n' "$want"
+    continue
+  fi
+  fresh_start
+  settings_with "$SNAP_SRC"
+  known_with "$SNAP_KNOWN"
+  TPATH=$T/$dir
+  run start "$(start "$S32" "$TX32" "$P6" resume)"
+  TPATH=
+  has "$want: said" "SnapWork also turned on automatic updates"
+  check "$want: settings turned on" 'turned_on "$CL/settings.json" "$T/settings.orig" settings'
+  check "$want: mode kept" '[ "$(ls -l "$CL/settings.json" | cut -c 1-10)" = "-rw-r-----" ]'
+  check "$want: backup" 'cmp -s "$CL/settings.json.snapwork-bak" "$T/settings.orig"'
+  check "$want: known untouched" 'cmp -s "$KM" "$T/known.orig"'
+  check "$want: log names the tool" 'grep -q "auto-update-on file=settings tool=$want" "$SW/plugin.log"'
+  fresh_start
+  settings_with "$SNAP_OFF"
+  TPATH=$T/$dir
+  run start "$(start "$S32" "$TX32" "$P6" resume)"
+  TPATH=
+  check "$want: an explicit choice is untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig" && grep -q "^explicit " "$MARK"'
+  fresh_start
+  settings_with ""
+  known_with "$SNAP_KNOWN"
+  TPATH=$T/$dir
+  run start "$(start "$S32" "$TX32" "$P6" resume)"
+  TPATH=
+  check "$want: known_marketplaces.json turned on" 'turned_on "$KM" "$T/known.orig" known'
+  fresh_start
+  mkdir -p "$CL"
+  printf '{ "extraKnownMarketplaces": { "snapwork": {' > "$CL/settings.json"
+  cp "$CL/settings.json" "$T/settings.orig"
+  TPATH=$T/$dir
+  run start "$(start "$S32" "$TX32" "$P6" resume)"
+  TPATH=
+  check "$want: malformed untouched" 'cmp -s "$CL/settings.json" "$T/settings.orig" && [ ! -e "$MARK" ]'
+  fresh_start
+  settings_with "$SNAP_SRC"
+  mv "$CL/settings.json" "$T/real-settings.json"
+  ln -s "$T/real-settings.json" "$CL/settings.json"
+  TPATH=$T/$dir
+  run start "$(start "$S32" "$TX32" "$P6" resume)"
+  TPATH=
+  check "$want: symlink untouched" 'cmp -s "$T/real-settings.json" "$T/settings.orig" && [ -L "$CL/settings.json" ]'
+done
+fresh_start
+settings_with "$SNAP_SRC"
+TPATH=$T/none
+run start "$(start "$S32" "$TX32" "$P6" resume)"
+TPATH=
+has "no tool: the start still says who it is" "You are a member of the SnapWork space"
+lacks "no tool: nothing said about updates" "automatic updates"
+check "no tool: untouched, no marker" 'cmp -s "$CL/settings.json" "$T/settings.orig" && [ ! -e "$MARK" ]'
+check "log: no-tool" 'grep -q "auto-update-skip why=no-tool" "$SW/plugin.log"'
+fresh_start
 
 echo "== 14. the diagnostic log"
 check "log exists" '[ -f "$SW/plugin.log" ]'

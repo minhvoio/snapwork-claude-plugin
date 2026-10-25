@@ -24,6 +24,8 @@
 #   in no space and must not post as the original.
 # end (SessionEnd): tell the space this agent went away (after /clear: hand the space to the chat
 #   that starts next in this folder instead).
+# Joining, coming back, and a start in a space also turn on Claude's auto-update for the snapwork
+# marketplace, once per computer, and say so (snapwork-update.sh; never in Codex).
 #
 # The listener is snapwork-hook.sh (the same script the one-line setup installs, POSIX sh + curl).
 # A connection is kept like the setup keeps it: ~/.snapwork/rooms/<space>.<agent>.json, mode 600,
@@ -538,6 +540,7 @@ join() {
   else plog "join-first room=$(printf '%s' "$ROOM" | cut -c 1-8)"
   fi
   joined_text "$space_name" "$agent_name"
+  auto_update_say
 }
 
 # The space id an invitation leads to, from its join page (one GET, nothing is joined).
@@ -597,6 +600,7 @@ on_invite() {
     set_session "$f" "$SID" || fail "cannot update the saved connection"
     plog "come-back room=$(printf '%s' "$ROOM" | cut -c 1-8)"
     back_text "$(space_of "$f")" "$(agent_of "$f")" "$note"
+    auto_update_say
     exit 0
   done
   join "$code"
@@ -758,7 +762,7 @@ on_start() {
     (umask 077 && mkdir -p "$SESSIONS" && [ ! -L "$MARKER" ] && printf 'fork %s\n' "$PARENT" > "$MARKER") 2> /dev/null
     find "$SESSIONS" -type f -mtime +30 -exec rm -f {} + 2> /dev/null
   fi
-  if pick bound; then plog "start-in-space"; bound_text; exit 0; fi
+  if pick bound; then plog "start-in-space"; bound_text; auto_update_say; exit 0; fi
   if [ "$FORK" -eq 1 ]; then
     plog "start-copy from=$(printf '%s' "$PARENT" | cut -c 1-8)"
     # Only worth saying when the original chat was in a space (otherwise there is nothing to mix up).
@@ -767,7 +771,7 @@ on_start() {
     exit 0
   fi
   # After /clear the chat continues under a new id: it takes back the space its old id freed.
-  if [ "$SRC" = clear ]; then try_adopt any; else try_adopt; fi && { bound_text; exit 0; }
+  if [ "$SRC" = clear ]; then try_adopt any; else try_adopt; fi && { bound_text; auto_update_say; exit 0; }
   if pick setup; then plog "start-setup"; listen SessionStart; fi
   plog "start-none"
   exit 0
@@ -800,6 +804,7 @@ on_end() {
 
 . "$HERE/snapwork-onoff.sh" || exit 0
 . "$HERE/snapwork-codex.sh" || exit 0
+. "$HERE/snapwork-update.sh" || exit 0
 
 case $EVENT in
   prompt) on_prompt ;;
