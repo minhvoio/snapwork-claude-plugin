@@ -32,6 +32,7 @@ case $CODEX_LISTEN_MAX in '' | *[!0-9]*) CODEX_LISTEN_MAX=82800 ;; esac
 # A round shorter than this never repeats (a listener that cannot wait must not spin).
 CODEX_MIN_ROUND_S=${SNAPWORK_CODEX_MIN_ROUND_S:-60}
 case $CODEX_MIN_ROUND_S in '' | *[!0-9]*) CODEX_MIN_ROUND_S=60 ;; esac
+CODEX_SAME_TEXT_MIN=120
 DEADLINE_LINE="SnapWork: nothing new for a while. End your turn now; that re-arms listening."
 
 codex_block_rules() {
@@ -186,8 +187,9 @@ codex_post_reply() {
   [ -z "$turn" ] || turn=$(codex_answer_id "$turn")
   said=$SESSIONS/$SID.said
   find "$SESSIONS" -type f \( -name '*.said' -o -name '*.wakes' \) -mtime +30 -exec rm -f {} + 2> /dev/null
+  tlog=turn=$(printf '%s' "${turn%-*}" | cut -c 1-8)-${turn##*-}
   if [ -n "$turn" ] && [ -f "$said" ] && [ ! -L "$said" ] && [ "$(head -n 1 "$said")" = "$turn" ]; then
-    plog "codex-say-repeat"
+    plog "codex-say-repeat $tlog"
     return 0
   fi
   work_dir || return 0
@@ -203,10 +205,17 @@ codex_post_reply() {
     codex_not_posted not-last "the snapwork block must be closed and be the very end of your answer, with one block only"
   fi
   [ -s "$WORK/block" ] || return 0
-  # Recorded first: whatever happens next, this turn's block is never sent twice.
-  if [ -n "$turn" ]; then
-    (umask 077 && mkdir -p "$SESSIONS" && [ ! -L "$said" ] && printf '%s\n' "$turn" > "$said") 2> /dev/null
+  # The ChatGPT app can end a turn again with the answer that was already posted, under another
+  # turn id (seen 2026-10-25: the same hello posted 5 minutes apart). The same block as this chat's
+  # last post, within CODEX_SAME_TEXT_MIN minutes, is that answer again: never posted twice.
+  sum=$(cksum < "$WORK/block" | tr -s ' ' '-')
+  if [ -f "$said" ] && [ ! -L "$said" ] && [ "$(sed -n 2p "$said")" = "$sum" ] \
+    && [ -n "$(find "$said" -mmin -"$CODEX_SAME_TEXT_MIN" 2> /dev/null)" ]; then
+    plog "codex-say-same-text $tlog"
+    return 0
   fi
+  # Recorded first: whatever happens next, this turn's block is never sent twice.
+  (umask 077 && mkdir -p "$SESSIONS" && [ ! -L "$said" ] && printf '%s\n%s\n' "$turn" "$sum" > "$said") 2> /dev/null
   codex_block_ok "$WORK/block" || codex_not_posted bad-text "the plugin could not read it"
   bytes=$(wc -c < "$WORK/block" | tr -d ' ')
   [ "$bytes" -le "$CODEX_SAY_MAX_BYTES" ] || codex_not_posted too-long "it is too long for one message: split it into shorter ones"
@@ -220,7 +229,7 @@ codex_post_reply() {
     api POST say "$WORK/say.json"
   fi
   case $API_STATUS in
-    2??) plog "codex-said bytes=$bytes"; return 0 ;;
+    2??) plog "codex-said bytes=$bytes $tlog"; return 0 ;;
   esac
   key_unknown && gone 401
   space_missing && gone 404

@@ -776,6 +776,8 @@ on_stop() {
   if pick bound || try_adopt; then
     if is_off; then plog "off"; exit 0; fi
     [ "$APP" != codex ] || codex_post_reply
+    # The app may stop a long Stop hook: the log says so (it then no longer listens for this chat).
+    [ "$APP" != codex ] || trap 'plog "stop-ended-by-app"; exit 0' TERM HUP INT
     plog "listen"
     listen Stop
   fi

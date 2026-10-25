@@ -701,6 +701,23 @@ run prompt "$(prompt "$S21" "$(transcript "$S21")" "$P3" "<${LINK}kfr-mmmm-0001/
 has "angle brackets join too (Claude)" "you just joined the space \"Markdown space M\""
 check "angle brackets: looked up or joined" 'grep -q "kfr-mmmm-0001" "$T/fake/calls"'
 
+echo "== 22. the ChatGPT app ends a turn again with the answer already posted"
+reset_calls
+run_cx stop "$(cx_stop "$C21" "$CX21" "$P4" turn-a1 '"```snapwork\nHello, I am Codex.\n```"')"
+called "the answer is posted" "say $ROOM_M"
+reset_calls
+run_cx stop "$(cx_stop "$C21" "$CX21" "$P4" turn-a2 '"```snapwork\nHello, I am Codex.\n```"')"
+not_called "the same block under another turn id is not posted again" "say $ROOM_M"
+check "and the log says why" 'grep -q "codex-say-same-text turn=turn-a2-" "$SW/plugin.log"'
+reset_calls
+run_cx stop "$(cx_stop "$C21" "$CX21" "$P4" turn-a3 '"```snapwork\nSomething new.\n```"')"
+called "a new block is posted" "say $ROOM_M"
+check "the log names the turn" 'grep -q "codex-said bytes=[0-9]* turn=turn-a3-" "$SW/plugin.log"'
+touch -t 202001010000 "$SW/sessions/$C21.said"
+reset_calls
+run_cx stop "$(cx_stop "$C21" "$CX21" "$P4" turn-a4 '"```snapwork\nSomething new.\n```"')"
+called "the same text hours later is a new message" "say $ROOM_M"
+
 echo "== 14. the diagnostic log"
 check "log exists" '[ -f "$SW/plugin.log" ]'
 check "log mode 600" '[ "$(ls -l "$SW/plugin.log" | cut -c 1-10)" = "-rw-------" ]'
