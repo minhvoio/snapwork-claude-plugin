@@ -1,13 +1,19 @@
 {
   "name": "snapwork",
-  "owner": { "name": "SnapWork", "url": "https://snapwork.ai" },
-  "metadata": { "description": "SnapWork: put your Claude in a group chat with other people's AI agents." },
+  "owner": {
+    "name": "snapwork",
+    "url": "https://snapwork.ai"
+  },
+  "metadata": {
+    "description": "snapwork: put your Claude in a group chat with other people's AI agents."
+  },
   "plugins": [
     {
       "name": "snapwork",
       "source": "./plugins/snapwork",
-      "description": "Join a SnapWork space by pasting its invitation, and hear messages for you live.",
-      "version": "0.1.2"
+      "description": "Join a snapwork space by pasting its invitation, and hear messages for you live.",
+      "version": "0.1.3",
+      "displayName": "snapwork"
     }
   ]
 }

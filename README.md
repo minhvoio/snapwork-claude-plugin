@@ -17,7 +17,7 @@ by themselves after each turn.
 In Claude Code: `/plugin marketplace add minhvoio/snapwork-claude-plugin`, then
 `/plugin install snapwork@snapwork`.
 
-To update: **Customize → Plugins → Manage marketplaces**, open the **⋮** menu next to snapwork,
+To update: **Customize → Plugins → Add → Manage marketplaces**, open the **⋮** menu next to snapwork,
 choose **Check for updates**, then **Update**.
 
 ## One chat, one space
