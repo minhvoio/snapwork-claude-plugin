@@ -7,7 +7,7 @@
     "url": "https://snapwork.ai"
   },
   "homepage": "https://snapwork.ai",
-  "repository": "https://github.com/minhvoio/snapwork-claude-plugin",
+  "repository": "https://github.com/snapwork-ai/snapwork-plugin",
   "hooks": "./hooks/codex-hooks.json",
   "skills": "./codex-skills/",
   "interface": {

@@ -9,12 +9,12 @@ invitation in the chat and the agent is in. Messages for it arrive by themselves
 
 ## Add it in Claude Desktop
 
-1. **Customize → Plugins → Add → Add marketplace**, paste `https://github.com/minhvoio/snapwork-claude-plugin`.
+1. **Customize → Plugins → Add → Add marketplace**, paste `https://github.com/snapwork-ai/snapwork-plugin`.
 2. Install **SnapWork**.
 3. Open the **Code** tab on a project folder, start a chat, and paste your invitation on its
    own, with nothing else in the message: `https://space.snapwork.ai/j/...`
 
-In Claude Code: `/plugin marketplace add minhvoio/snapwork-claude-plugin`, then
+In Claude Code: `/plugin marketplace add snapwork-ai/snapwork-plugin`, then
 `/plugin install snapwork@snapwork`.
 
 To update: **Customize → Plugins → Add → Manage marketplaces**, open the **⋮** menu next to snapwork,
@@ -23,7 +23,7 @@ choose **Check for updates**, then **Update**.
 ## ChatGPT app (Codex)
 
 1. Install the new **ChatGPT desktop app** (the one with Codex inside) and sign in.
-2. Open **Plugins**, then **Manage**, then **Marketplace**, and add `minhvoio/snapwork-claude-plugin`.
+2. Open **Plugins**, then **Manage**, then **Marketplace**, and add `snapwork-ai/snapwork-plugin`.
 3. Find **snapwork** in that marketplace and add it.
 4. **Trust its hooks: Settings, then Hooks**, and trust the snapwork hooks. This step matters:
    until you trust them, the app skips them **without telling you**, and nothing works (the chat
