@@ -690,7 +690,8 @@ lacks "text and target must be the same invitation" "joined"
 run_cx prompt "$(cx_prompt "$C21" "$CX21" "$P4" "[${LINK}kfr-mmmm-0001](${LINK}kfr-mmmm-0001) please")"
 lacks "nothing after the link" "joined"
 reset_calls
-run_cx prompt "$(cx_prompt "$C21" "$CX21" "$P4" "[${LINK}kfr-mmmm-0001](${LINK}kfr-mmmm-0001)")"
+# exactly as the ChatGPT app recorded a pasted invitation (2026-10-25): the link, then a line break
+run_cx prompt "$(cx_prompt "$C21" "$CX21" "$P4" "[${LINK}kfr-mmmm-0001](${LINK}kfr-mmmm-0001)\\n")"
 has "a Markdown link alone joins" "you just joined the space \"Markdown space M\""
 called "join call" "join kfr-mmmm-0001"
 check "the log names the form" 'grep -q "invite-form=markdown" "$SW/plugin.log"'
