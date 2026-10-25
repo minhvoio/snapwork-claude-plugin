@@ -638,6 +638,44 @@ check "the Claude hooks.json is not Codex" '! grep -q codex "$ROOT/plugins/snapw
 check "keys never on a command line (Codex too)" '! grep -q KEY-IN-ARGV "$T/fake/calls"'
 check "the log never holds a block" '! grep -q "Hi \|hello\|pwned" "$SW/plugin.log"'
 
+echo "== 20. send-to-space: do the request, then post the result in the space"
+ROOM_X=14141414-0000-4000-8000-00000000000e
+echo "kfr-xxxx-0001|$ROOM_X|Send space X" >> "$T/fake/spaces"
+S20=20202020-aaaa-4000-8000-000000000020
+TX20=$(transcript "$S20")
+P5=$HOMEDIR/proj5
+mkdir -p "$P5"
+run prompt "$(prompt "$S20" "$TX20" "$P5" "/snapwork:send-to-space finish the fix and share it")"
+has "not in a space: nothing to post" "this chat is not in a space yet, so nothing can be posted"
+has "but the work still gets done" "Do the rest of the request as usual"
+run prompt "$(prompt "$S20" "$TX20" "$P5" "${LINK}kfr-xxxx-0001")"
+reset_calls
+run prompt "$(prompt "$S20" "$TX20" "$P5" "/snapwork:send-to-space finish the fix and share it")"
+has "names the space and member" "posted in the space \"Send space X\", as \"Claude\""
+has "work first" "Do the work first"
+has "Claude gets its say command" "--say --room $ROOM_X --agent "
+lacks "Claude gets no block rules" '```snapwork'
+check "the hook posts nothing itself" '! grep -q "^say " "$T/fake/calls"'
+check "and does not listen on this prompt" '! grep -q "^hook " "$T/fake/calls"'
+run prompt "$(prompt "$S20" "$TX20" "$P5" "/snapwork:send-to-spacefoo")"
+lacks "send-to-spacefoo is not the command" "posted in the space"
+run prompt "$(prompt "$S20" "$TX20" "$P5" "please /snapwork:send-to-space it")"
+lacks "the command must lead the message" "posted in the space"
+run prompt "$(prompt "$S20" "$TX20" "$P5" "/snapwork:exit-space")"
+run prompt "$(prompt "$S20" "$TX20" "$P5" "/snapwork:send-to-space share it")"
+has "an off chat posts nothing" "turned off in the space \"Send space X\", so it posts nothing there; /snapwork:join-space turns it back on"
+run prompt "$(prompt "$S20" "$TX20" "$P5" "/snapwork:join-space")"
+reset_calls
+run_cx prompt "$(cx_prompt "$C1" "$CX1" "$P4" '$snapwork:send-to-space summarise the fix for the space')"
+has "Codex: names its space" "posted in the space \"Codex space H\""
+has "Codex: gets the block rules" 'starts with a line ```snapwork'
+lacks "Codex: no say command" "--say --room"
+run_cx prompt "$(cx_prompt "$C1" "$CX1" "$P4" '[$send-to-space](/plugins/snapwork/codex-skills/send-to-space/SKILL.md) share it')"
+has "Codex: a skill link works" "posted in the space \"Codex space H\""
+run_cx prompt "$(cx_prompt "$C1" "$CX1" "$P4" '@snapwork:source-command-send-to-space share it')"
+has "Codex: the skill made from the Claude command works" "posted in the space \"Codex space H\""
+check "the log notes the command, never its text" 'grep -q "command-send form=slash" "$SW/plugin.log" && grep -q "send-asked" "$SW/plugin.log" && ! grep -q "finish the fix\|summarise the fix" "$SW/plugin.log"'
+
 echo "== 14. the diagnostic log"
 check "log exists" '[ -f "$SW/plugin.log" ]'
 check "log mode 600" '[ "$(ls -l "$SW/plugin.log" | cut -c 1-10)" = "-rw-------" ]'

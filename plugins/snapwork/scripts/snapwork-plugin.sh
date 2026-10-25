@@ -46,11 +46,13 @@ APP=claude
 if [ "$APP" = codex ]; then
   CMD_JOIN='$snapwork:join-space'
   CMD_EXIT='$snapwork:exit-space'
+  CMD_SEND='$snapwork:send-to-space'
   AGENT_FOR=codex
   DEFAULT_NAME=Codex
 else
   CMD_JOIN=/snapwork:join-space
   CMD_EXIT=/snapwork:exit-space
+  CMD_SEND=/snapwork:send-to-space
   AGENT_FOR=claude-code
   DEFAULT_NAME=Claude
 fi
@@ -417,6 +419,32 @@ copy_text() {
   printf 'If the person pastes a SnapWork invitation on its own, this chat joins that space.\n'
 }
 
+# /snapwork:send-to-space <request>: the person wants the outcome of this request posted in the
+# space. The agent does the work and writes the message itself; this only says where and how.
+send_to_space() {
+  if pick bound || try_adopt; then
+    if is_off; then
+      plog "send-off"
+      printf 'SnapWork: this chat is turned off in the space "%s", so it posts nothing there; '"$CMD_JOIN"' turns it back on. Do the rest of the request as usual and tell the person this in one line.\n' "$(space_of "$STATE")"
+      exit 0
+    fi
+  elif ! pick setup; then
+    plog "send-none"
+    printf 'SnapWork: this chat is not in a space yet, so nothing can be posted. Do the rest of the request as usual, post nothing, and tell the person in one line to paste the invitation link on its own first.\n'
+    exit 0
+  fi
+  plog "send-asked"
+  printf 'SnapWork: the person wants the outcome of this request posted in the space "%s", as "%s". Do the work first. When it is done, write one message for the space with the result, the way you would tell the people and agents there, not your working notes. ' \
+    "$(space_of "$STATE")" "$(agent_of "$STATE")"
+  if [ "$APP" = codex ] && ! made_by_setup "$STATE"; then
+    codex_block_rules
+  else
+    printf 'Post it once with: sh ~/.snapwork/snapwork-hook.sh --say %s -- \047<text>\047 (single-quote the text and write any \047 inside it as \047\134\047\047). Never put secrets, keys, tokens or environment values in it. ' "$(say_args)"
+  fi
+  printf 'Then tell the person in one line that it was posted.\n'
+  exit 0
+}
+
 fail() {
   plog "join-failed"
   printf 'SnapWork: could not join the space: %s. Tell the person this in one line.\n' "$1"
@@ -572,9 +600,10 @@ on_invite() {
   exit 0
 }
 
-# command_of <message>: is the message one of this plugin's commands? Claude: /snapwork:join-space
-# or /snapwork:exit-space. Codex runs them as skills, and a skill arrives as text: $snapwork:join-space
-# (also @..., the short $join-space, source-command-join-space, or a [$...](...) link). Sets CMD_KIND (join or exit), CMD_FORM
+# command_of <message>: is the message one of this plugin's commands? Claude: /snapwork:join-space,
+# /snapwork:exit-space or /snapwork:send-to-space. Codex runs them as skills, and a skill arrives as
+# text: $snapwork:join-space (also @..., the short $join-space, source-command-join-space, or a
+# [$...](...) link). Sets CMD_KIND (join, exit or send), CMD_FORM
 # (for the log) and CMD_TAIL (what follows the command). Anything glued on (join-spacefoo) is not it.
 CMD_KIND=
 CMD_FORM=
@@ -587,9 +616,9 @@ command_of() {
   # Codex also turns this plugin's Claude commands into skills named source-command-<name>.
   [ "$APP" != codex ] || forms='/snapwork: $snapwork: @snapwork: $ @ $snapwork:source-command- @snapwork:source-command-'
   set -f
-  for k in join exit; do
+  for name in join-space exit-space send-to-space; do
     for pre in $forms; do
-      tok=$pre$k-space
+      tok=$pre$name
       case $t in "$tok"*) ;; *) continue ;; esac
       rest=${t#"$tok"}
       if [ "$linked" -eq 1 ]; then
@@ -597,7 +626,7 @@ command_of() {
       fi
       case $rest in '' | ' '* | '\'*) ;; *) continue ;; esac
       set +f
-      CMD_KIND=$k
+      CMD_KIND=${name%%-*}
       CMD_TAIL=$rest
       case $pre in /*) CMD_FORM=slash ;; '$'*) CMD_FORM=dollar ;; *) CMD_FORM=at ;; esac
       [ "$linked" -eq 0 ] || CMD_FORM=$CMD_FORM-link
@@ -674,6 +703,8 @@ on_prompt() {
         printf 'SnapWork: this chat is not in a space yet. Tell the person, in one line, to paste the invitation link on its own.\n'
       fi
       exit 0 ;;
+    sendcmd)
+      send_to_space ;;
     exitcmd)
       if pick bound || try_adopt; then exit_space; fi
       plog "exit-none"

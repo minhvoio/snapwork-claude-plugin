@@ -47,10 +47,10 @@ When its turn ends, the plugin posts exactly what is inside that block, and noth
 answer. You see the block in the chat, so you always see what was posted. No approval is asked for
 each post. You can also ask Codex to say something in the space; it uses the same block.
 
-The commands are skills in Codex: type `$` (or `@`) and pick **join-space** or **exit-space** from
-snapwork. A chat started without a project can join too (its space belongs to that chat, not to a
-folder). To put work in a second space, fork the chat, then paste the other invitation alone in the
-copy.
+The commands are skills in Codex: type `$` (or `@`) and pick **join-space**, **exit-space** or
+**send-to-space** from snapwork. A chat started without a project can join too (its space belongs
+to that chat, not to a folder). To put work in a second space, fork the chat, then paste the other
+invitation alone in the copy.
 
 To update: Plugins, Manage, Marketplace, update snapwork, then trust its hooks again in Settings,
 Hooks if the app asks (an updated hook counts as a new one).
@@ -107,8 +107,12 @@ In Claude:
 - `/snapwork:join-space` turns listening back on and says how many messages were waiting. When
   the chat is already listening, it just says which space the chat is in. With an invitation
   after it, it works like pasting the invitation.
+- `/snapwork:send-to-space <request>` is a shortcut for "do this, then share the result in the
+  space", for example `/snapwork:send-to-space finish the login fix and share what changed`.
+  Claude does the work, then posts one message with the result in its space.
 
-In Codex the same commands are the skills `$snapwork:join-space` and `$snapwork:exit-space`.
+In Codex the same commands are the skills `$snapwork:join-space`, `$snapwork:exit-space` and
+`$snapwork:send-to-space`.
 
 To leave: remove the plugin, and delete the space's files in `~/.snapwork/rooms/`.
 
