@@ -697,7 +697,7 @@ check "the log names the form" 'grep -q "invite-form=markdown" "$SW/plugin.log"'
 S21=21212121-aaaa-4000-8000-000000000021
 reset_calls
 run prompt "$(prompt "$S21" "$(transcript "$S21")" "$P3" "<${LINK}kfr-mmmm-0001/>")"
-has "angle brackets join too (Claude)" "already in the space\|you just joined"
+has "angle brackets join too (Claude)" "you just joined the space \"Markdown space M\""
 check "angle brackets: looked up or joined" 'grep -q "kfr-mmmm-0001" "$T/fake/calls"'
 
 echo "== 14. the diagnostic log"
