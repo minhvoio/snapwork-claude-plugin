@@ -1,5 +1,6 @@
 # snapwork-onoff.sh: sourced by snapwork-plugin.sh (not run by itself). Turning this chat's
-# member off and on (/snapwork:exit-space, /snapwork:join-space) and noticing when SnapWork no
+# member off and on (/snapwork:exit-space, /snapwork:join-space; in Codex the skills $snapwork:exit-space,
+# $snapwork:join-space) and noticing when SnapWork no
 # longer accepts its key (removed, refused, or the space is gone).
 #
 # Uses from snapwork-plugin.sh: GATEWAY, ROOMS, ROOM, AGENT, STATE, API_SECONDS, field, set_line,
@@ -8,8 +9,9 @@
 
 API_STATUS=
 API_BODY=
-# api <GET|POST> <path under /rooms/<id>/>: one call with this chat's key. Sets API_STATUS (the
-# HTTP status, or 000 when nothing came back) and API_BODY (a private temp file with the answer).
+# api <GET|POST> <path under /rooms/<id>/> [body file]: one call with this chat's key (a POST sends
+# the body file, or {}). Sets API_STATUS (the HTTP status, or 000 when nothing came back) and
+# API_BODY (a private temp file with the answer).
 api() {
   API_STATUS=000
   key=$(field key "$STATE")
@@ -21,8 +23,10 @@ api() {
   API_BODY=$WORK/api.body
   rm -f "$API_BODY"
   if [ "$1" = POST ]; then
+    data='{}'
+    [ -z "${3:-}" ] || data=@$3
     API_STATUS=$(printf 'header = "Authorization: Bearer %s"\n' "$key" | curl -q -K - --proto =https -sS --max-time "$API_SECONDS" \
-      -o "$API_BODY" -w '%{http_code}' -X POST -H 'content-type: application/json' --data-binary '{}' \
+      -o "$API_BODY" -w '%{http_code}' -X POST -H 'content-type: application/json' --data-binary "$data" \
       "$GATEWAY/rooms/$ROOM/$2" 2> /dev/null)
   else
     API_STATUS=$(printf 'header = "Authorization: Bearer %s"\n' "$key" | curl -q -K - --proto =https -sS --max-time "$API_SECONDS" \
@@ -99,12 +103,13 @@ gone() {
 # A refusal from the listening gate (403) names the agent's state; "refused" is final.
 gate_refused() { [ "$(body_word state)" = refused ]; }
 
-# /snapwork:exit-space in a chat that is in a space.
+# /snapwork:exit-space in a chat that is in a space. CMD_JOIN is spliced into printf formats here:
+# it is one of two fixed words set in snapwork-plugin.sh, never anything a person or message chose.
 exit_space() {
   space=$(space_of "$STATE")
   if is_off; then
     plog "exit-already-off"
-    printf 'SnapWork: this chat already stopped listening in "%s". You are still a member; /snapwork:join-space turns it back on. Tell the person this in one line.\n' "$space"
+    printf 'SnapWork: this chat already stopped listening in "%s". You are still a member; '"$CMD_JOIN"' turns it back on. Tell the person this in one line.\n' "$space"
     exit 0
   fi
   api POST listening/stop
@@ -116,7 +121,7 @@ exit_space() {
     fi
     stop_local_listener
     plog "exit-off"
-    printf 'SnapWork: stopped listening in "%s". You are still a member; /snapwork:join-space turns it back on. Tell the person this in one line.\n' "$space"
+    printf 'SnapWork: stopped listening in "%s". You are still a member; '"$CMD_JOIN"' turns it back on. Tell the person this in one line.\n' "$space"
     exit 0
   fi
   if key_unknown; then gone 401; fi

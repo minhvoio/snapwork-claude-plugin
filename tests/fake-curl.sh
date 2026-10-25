@@ -11,12 +11,16 @@
 #   proxy404        something in front of the gateway answers stop/start with an HTML 404
 #   old             the gateway has no stop/start routes yet (404 "Route not found")
 #   waiting         how many messages waited, for start (default 2)
+#   msg_<room>      the next hook read answers 200 with this text (text/plain), then it is gone
+#   sayfail_<room>  a say answers 403 (the member has not said hello yet)
+# A say is logged as "say <room>" and its body kept in said_<room>; a join's body in join_body.
 set -u
 out=
 wfmt=
 hdr=
 url=
 method=GET
+data=
 fail_on_http=0
 for arg in "$@"; do
   case $arg in *testkey* | *legacykey* | *setupkey*) echo "KEY-IN-ARGV" >> "$FAKE_DIR/calls" ;; esac
@@ -28,13 +32,14 @@ while [ $# -gt 0 ]; do
     -w) shift; wfmt=$1 ;;
     -D) shift; hdr=$1 ;;
     -X) shift; method=$1 ;;
-    -K | -H | --proto | --max-time | --data-binary | --data-urlencode) shift ;;
+    --data-binary) shift; data=$1 ;;
+    -K | -H | --proto | --max-time | --data-urlencode) shift ;;
     -*) ;;
     *) url=$1 ;;
   esac
   shift
 done
-cat > /dev/null
+if [ "$data" = @- ]; then cat > "$FAKE_DIR/join_body"; else cat > /dev/null; fi
 space() { grep "^$1|" "$FAKE_DIR/spaces" | head -n 1; }
 code_status() { [ -z "$wfmt" ] || printf '%s' "$1"; }
 answer() {
@@ -76,8 +81,21 @@ case $url in
     r=$(room_of)
     echo "hook $r" >> "$FAKE_DIR/calls"
     gate
+    if [ -e "$FAKE_DIR/msg_$r" ]; then
+      [ -z "$hdr" ] || printf 'HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\nx-snapwork-cursor: m1\r\n\r\n' > "$hdr"
+      body=$(cat "$FAKE_DIR/msg_$r")
+      rm -f "$FAKE_DIR/msg_$r"
+      answer 200 "$body"
+    fi
     [ -z "$hdr" ] || printf 'HTTP/1.1 204 No Content\r\n\r\n' > "$hdr"
     answer 204 '' ;;
+  */rooms/*/say)
+    r=$(room_of)
+    echo "say $r" >> "$FAKE_DIR/calls"
+    gate
+    case $data in @*) cp "${data#@}" "$FAKE_DIR/said_$r" ;; *) printf '%s' "$data" > "$FAKE_DIR/said_$r" ;; esac
+    [ ! -e "$FAKE_DIR/sayfail_$r" ] || answer 403 '{"refusal":"wait","listening":{"state":"pending"},"error":{"code":"LISTENING_REQUIRED","message":"This agent is not listening yet; the call is refused"}}'
+    answer 201 '{"id":"m2"}' ;;
   */rooms/*/away)
     echo "away $(room_of)" >> "$FAKE_DIR/calls" ;;
   */rooms/*/listening/stop | */rooms/*/listening/start)

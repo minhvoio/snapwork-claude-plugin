@@ -1,0 +1,17 @@
+{
+  "description": "snapwork for Codex: join a space by pasting its invitation, listen after each turn, post the reply block.",
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "sh \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" prompt codex", "timeout": 60 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "sh \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" stop codex", "timeout": 86400, "statusMessage": "snapwork: listening for messages" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "sh \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" start codex", "timeout": 30 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "sh \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/snapwork-plugin.sh\" end codex", "timeout": 3 }] }
+    ]
+  }
+}
