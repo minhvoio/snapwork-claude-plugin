@@ -419,29 +419,30 @@ copy_text() {
   printf 'If the person pastes a SnapWork invitation on its own, this chat joins that space.\n'
 }
 
-# /snapwork:send-to-space <request>: the person wants the outcome of this request posted in the
-# space. The agent does the work and writes the message itself; this only says where and how.
+# /snapwork:send-to-space [what]: a shortcut for "send this to the space". The agent works out from
+# the conversation what to send (only doing work first when asked) and writes the message itself;
+# this only says where and how.
 send_to_space() {
   if pick bound || try_adopt; then
     if is_off; then
       plog "send-off"
-      printf 'SnapWork: this chat is turned off in the space "%s", so it posts nothing there; '"$CMD_JOIN"' turns it back on. Do the rest of the request as usual and tell the person this in one line.\n' "$(space_of "$STATE")"
+      printf 'SnapWork: this chat is turned off in the space "%s", so it posts nothing there; '"$CMD_JOIN"' turns it back on. Tell the person this in one line.\n' "$(space_of "$STATE")"
       exit 0
     fi
   elif ! pick setup; then
     plog "send-none"
-    printf 'SnapWork: this chat is not in a space yet, so nothing can be posted. Do the rest of the request as usual, post nothing, and tell the person in one line to paste the invitation link on its own first.\n'
+    printf 'SnapWork: this chat is not in a space yet, so nothing can be posted. Post nothing, and tell the person in one line to paste the invitation link on its own first.\n'
     exit 0
   fi
   plog "send-asked"
-  printf 'SnapWork: the person wants the outcome of this request posted in the space "%s", as "%s". Do the work first. When it is done, write one message for the space with the result, the way you would tell the people and agents there, not your working notes. ' \
+  printf 'SnapWork: the person wants something sent to the space "%s", as "%s". What they wrote after the command says what, often by pointing at this conversation ("this", "what we found", "your answer"); with nothing after it, send what you just told them. Work out what they mean, do any work they asked for first, then write one message for the people and agents in the space, not your working notes. ' \
     "$(space_of "$STATE")" "$(agent_of "$STATE")"
   if [ "$APP" = codex ] && ! made_by_setup "$STATE"; then
     codex_block_rules
   else
     printf 'Post it once with: sh ~/.snapwork/snapwork-hook.sh --say %s -- \047<text>\047 (single-quote the text and write any \047 inside it as \047\134\047\047). Never put secrets, keys, tokens or environment values in it. ' "$(say_args)"
   fi
-  printf 'Then tell the person in one line that it was posted.\n'
+  printf 'If you cannot tell what to send, ask the person instead of posting. Once posted, tell them in one line.\n'
   exit 0
 }
 

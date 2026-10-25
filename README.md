@@ -107,9 +107,10 @@ In Claude:
 - `/snapwork:join-space` turns listening back on and says how many messages were waiting. When
   the chat is already listening, it just says which space the chat is in. With an invitation
   after it, it works like pasting the invitation.
-- `/snapwork:send-to-space <request>` is a shortcut for "do this, then share the result in the
-  space", for example `/snapwork:send-to-space finish the login fix and share what changed`.
-  Claude does the work, then posts one message with the result in its space.
+- `/snapwork:send-to-space <what>` is a shortcut for "send this to the space" while you talk with
+  Claude, for example `/snapwork:send-to-space this summary` or `/snapwork:send-to-space the plan
+  we just agreed`. Claude works out what you mean from the conversation and posts one message in
+  its space. On its own, it sends what Claude just told you.
 
 In Codex the same commands are the skills `$snapwork:join-space`, `$snapwork:exit-space` and
 `$snapwork:send-to-space`.
