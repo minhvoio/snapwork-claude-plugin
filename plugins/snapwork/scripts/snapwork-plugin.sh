@@ -185,9 +185,34 @@ join() {
 
 case $EVENT in
   prompt)
-    prompt=$(printf '%s' "$INPUT" | grep -o '"prompt"[[:space:]]*:[[:space:]]*"[^"]*' | head -n 1)
-    code=$(printf '%s' "$prompt" | grep -o 'https://space\.snapwork\.ai/j/[A-Za-z0-9_-]*' | head -n 1 | sed 's|.*/j/||')
-    if [ -n "$code" ] && [ "${#code}" -le 64 ]; then join "$code"; exit 0; fi
+    text=$(printf '%s' "$INPUT" | grep -o '"prompt"[[:space:]]*:[[:space:]]*"[^"]*' | head -n 1 | sed 's/^"prompt"[[:space:]]*:[[:space:]]*"//')
+    code=$(printf '%s' "$text" | grep -o 'https://space\.snapwork\.ai/j/[A-Za-z0-9_-]*' | head -n 1 | sed 's|.*/j/||')
+    # The first join is pasting the invitation alone (the whole message is the link). A link inside
+    # other pasted text (an email, a chat log) never joins. /snapwork:join-space comes back after
+    # /snapwork:exit-space.
+    bare=$(printf '%s' "$text" | sed 's/\\[nrt]//g' | tr -d ' \t')
+    case $bare in
+      https://space.snapwork.ai/j/"$code" | https://space.snapwork.ai/j/"$code"/)
+        if [ -n "$code" ] && [ "${#code}" -le 64 ]; then join "$code"; exit 0; fi ;;
+    esac
+    case $text in
+      /snapwork:join-space*)
+        if [ -n "$code" ] && [ "${#code}" -le 64 ]; then join "$code"; exit 0; fi
+        if find_state; then
+          printf 'SnapWork: this folder is already in the space "%s" as "%s"; messages for you arrive by themselves after each turn. Tell the person this in one line.\n' \
+            "$(field spaceName "$STATE")" "$(field agentName "$STATE")"
+        else
+          printf 'SnapWork: this folder is not in a space yet. Tell the person, in one line, to paste the invitation link on its own.\n'
+        fi
+        exit 0 ;;
+      /snapwork:exit-space*)
+        printf 'SnapWork: exit-space reached the plugin (test only: nothing was stopped, this folder still listens).\n'
+        exit 0 ;;
+    esac
+    if [ -n "$code" ]; then
+      printf 'SnapWork: to join this space, paste the invitation link on its own, with nothing else in the message. Tell the person this in one line; do not join it yourself.\n'
+      exit 0
+    fi
     listen UserPromptSubmit ;;
   stop) listen Stop ;;
   start) listen SessionStart ;;
