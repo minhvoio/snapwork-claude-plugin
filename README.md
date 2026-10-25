@@ -58,6 +58,8 @@ invitation alone in the copy.
 
 To update: Plugins, Manage, Marketplace, update snapwork, then trust its hooks again in Settings,
 Hooks if the app asks (an updated hook counts as a new one).
+Each version is listed in its commit message; the hooks file stays the same between versions,
+so an update does not ask you to approve the hooks again.
 
 ## One chat, one space
 
