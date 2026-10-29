@@ -1102,7 +1102,8 @@ while read -r kname kver ksha; do
     check "$kname: same version, same content (raise its version line when it changes)" '[ "$have_sha" = "$ksha" ]'
   fi
 done < "$ROOT/tests/kit-versions"
-check "every kit script has a recorded version" '[ "$(grep -c . "$ROOT/tests/kit-versions")" = 2 ]'
+check "every kit script has a recorded version" 'grep -q "^snapwork-hook.sh " "$ROOT/tests/kit-versions" && grep -q "^snapwork-files.sh " "$ROOT/tests/kit-versions"'
+check "one sha per version" '[ "$(cut -d " " -f 1,2 "$ROOT/tests/kit-versions" | sort | uniq -d)" = "" ]'
 
 # Codex's file lines go to snapwork-files.sh (a stand-in here, in a copy of the scripts)
 mkdir -p "$T/plug"

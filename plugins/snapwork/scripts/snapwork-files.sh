@@ -1,6 +1,6 @@
 #!/bin/sh
 # snapwork-files.sh: send and fetch SnapWork files with POSIX sh + curl only (M6.2).
-# snapwork-files-version: 2
+# snapwork-files-version: 3
 #
 # snapwork-hook.sh hands its file commands to this script (it lives next to it, in ~/.snapwork),
 # after it has found the connection and checked the gateway, the key and, when the setup pinned it,
@@ -39,9 +39,10 @@
 #
 # Fetching: into <project>/snapwork-files/<space name>/<cleaned name> (private to you), " (2)" on a
 # clash, never over an existing file; the name never becomes a path (letters, digits and a few
-# marks only). It needs the file's size plus 1 GB free. A cut download keeps what arrived and goes
-# on from there the next time; only the whole file is checked against the gateway's sha256 ETag,
-# and removed when it does not match. Error replies never land in the file.
+# marks only). It needs the file's size plus 1 GB free. Bytes go straight into a hidden .part, so a
+# cut or killed download keeps what arrived and the next run asks for the rest (Range, If-Range);
+# only the whole file is checked against the gateway's sha256 ETag, and removed when it does not
+# match. Error replies never land in the file, and nothing but the file is left once it is saved.
 #
 # File names and room text are untrusted: they are only cleaned, quoted and printed, never run.
 
@@ -522,9 +523,17 @@ name=$(printf '%s' "$raw" | LC_ALL=C tr -c 'A-Za-z0-9._()+,=@ -' '_' | sed 's/^[
 case $name in '' | *[!_]*) ;; *) name= ;; esac
 [ -n "$name" ] || name=$FILE_ID
 part=$dest/.$FILE_ID.part
+# Version 2 downloaded into this side file first, so a killed run left its bytes there: from 0 when
+# there was no .part, else the bytes right after it. They are folded into the .part, once.
 dl=$dest/.$FILE_ID.dl
 [ ! -L "$part" ] || rm -f "$part"
-rm -f "$dl"
+[ ! -L "$dl" ] || rm -f "$dl"
+if [ -f "$dl" ]; then
+  if [ -f "$part" ]; then cat "$dl" >> "$part" || failed "cannot write the download"
+  else mv -f "$dl" "$part" || failed "cannot write the download"
+  fi
+  rm -f "$dl"
+fi
 have=0
 [ -f "$part" ] && have=$(wc -c < "$part" | tr -d ' ')
 if [ "$have" -gt "$size" ]; then rm -f "$part"; have=0; fi
@@ -536,23 +545,32 @@ case $free_kb in
     [ "$free_kb" -ge "$need_kb" ] || failed "not enough free space: the file needs $(human_size $((size - have))) and 1 GB is kept free, but the disk has $(human_size $((free_kb * 1024))) free"
     ;;
 esac
-if [ "$have" -lt "$size" ]; then
-  # Into a side file with --fail, so an error reply never lands in the download.
+# Straight into the .part, so whatever arrives stays even when the run is killed. A resume asks
+# for the rest (Range from the .part's size, If-Range on the sha256) and appends; --fail keeps an
+# error reply's body out of the file. Prints the HTTP status.
+get_into_part() {
   if [ "$have" -gt 0 ]; then
-    code=$(api --fail -o "$dl" -D "$WORK/g" -r "$have-" -H "If-Range: \"$etag\"" "$url")
+    api --fail -C "$have" -o "$part" -D "$WORK/g" -H "If-Range: \"$etag\"" "$url"
   else
-    code=$(api --fail -o "$dl" -D "$WORK/g" "$url")
+    api --fail -o "$part" -D "$WORK/g" "$url"
+  fi
+}
+if [ "$have" -lt "$size" ]; then
+  code=$(get_into_part)
+  if [ "$code" = 200 ] && [ "$have" -gt 0 ]; then
+    # The whole file instead of the rest (no ranges, or the file changed): start again from 0.
+    rm -f "$part"
+    have=0
+    code=$(get_into_part)
   fi
   case $code in
     206)
       start=$(header content-range "$WORK/g" | sed -n 's/^bytes \([0-9][0-9]*\)-.*/\1/p')
-      if [ "$start" != "$have" ]; then rm -f "$dl"; failed "the gateway answered from another place in the file: run the same command again"; fi
-      [ ! -f "$dl" ] || { cat "$dl" >> "$part" && rm -f "$dl"; } || failed "cannot write the download"
+      if [ "$start" != "$have" ]; then rm -f "$part"; failed "the gateway answered from another place in the file: run the same command again"; fi
       ;;
-    200) [ ! -f "$dl" ] || mv -f "$dl" "$part" || failed "cannot write the download" ;;
-    000) rm -f "$dl" ;;
-    404) rm -f "$dl"; failed "there is no file $FILE_ID in this space (wrong id, or it was removed)" ;;
-    *) rm -f "$dl"; failed "the gateway answered HTTP $code" ;;
+    200 | 000) ;;
+    404) failed "there is no file $FILE_ID in this space (wrong id, or it was removed)" ;;
+    *) failed "the gateway answered HTTP $code" ;;
   esac
 fi
 [ -f "$part" ] || : > "$part"
