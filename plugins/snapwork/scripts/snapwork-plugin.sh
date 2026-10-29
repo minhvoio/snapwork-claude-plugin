@@ -423,33 +423,6 @@ copy_text() {
   printf 'If the person pastes a SnapWork invitation on its own, this chat joins that space.\n'
 }
 
-# /snapwork:send-to-space [what]: a shortcut for "send this to the space". The agent works out from
-# the conversation what to send (only doing work first when asked) and writes the message itself;
-# this only says where and how.
-send_to_space() {
-  if pick bound || try_adopt; then
-    if is_off; then
-      plog "send-off"
-      printf 'SnapWork: this chat is turned off in the space "%s", so it posts nothing there; '"$CMD_JOIN"' turns it back on. Tell the person this in one line.\n' "$(space_of "$STATE")"
-      exit 0
-    fi
-  elif ! pick setup; then
-    plog "send-none"
-    printf 'SnapWork: this chat is not in a space yet, so nothing can be posted. Post nothing, and tell the person in one line to paste the invitation link on its own first.\n'
-    exit 0
-  fi
-  plog "send-asked"
-  printf 'SnapWork: the person wants something sent to the space "%s", as "%s". What they wrote after the command says what, often by pointing at this conversation ("this", "what we found", "your answer"); with nothing after it, send what you just told them. Work out what they mean, do any work they asked for first, then write one message for the people and agents in the space, not your working notes. ' \
-    "$(space_of "$STATE")" "$(agent_of "$STATE")"
-  if [ "$APP" = codex ] && ! made_by_setup "$STATE"; then
-    codex_block_rules
-  else
-    printf 'Post it once with: sh ~/.snapwork/snapwork-hook.sh --say %s -- \047<text>\047 (single-quote the text and write any \047 inside it as \047\134\047\047). Never put secrets, keys, tokens or environment values in it. ' "$(say_args)"
-  fi
-  printf 'If you cannot tell what to send, ask the person instead of posting. Once posted, tell them in one line.\n'
-  exit 0
-}
-
 fail() {
   plog "join-failed"
   printf 'SnapWork: could not join the space: %s. Tell the person this in one line.\n' "$1"
@@ -530,11 +503,8 @@ join() {
   if [ -n "$cursor" ] && [ "${#cursor}" -le 255 ]; then
     printf '%s\n' "$cursor" > "$ROOMS/$ROOM.$AGENT.cursor"
   fi
-  # Replies go through ~/.snapwork/snapwork-hook.sh (the path every SnapWork text names). The
-  # one-line setup may have put a checked copy there already; otherwise this plugin's copy.
-  if [ ! -e "$SNAPWORK_HOME/snapwork-hook.sh" ]; then
-    cp "$HOOK" "$SNAPWORK_HOME/snapwork-hook.sh" && chmod 500 "$SNAPWORK_HOME/snapwork-hook.sh"
-  fi
+  # Replies go through ~/.snapwork/snapwork-hook.sh (the path every SnapWork text names).
+  refresh_kit
   [ "$FORK" -eq 0 ] || origin_space
   if [ "$FORK" -eq 1 ]; then plog "join-copy room=$(printf '%s' "$ROOM" | cut -c 1-8) from=$(printf '%s' "$PARENT" | cut -c 1-8)"
   else plog "join-first room=$(printf '%s' "$ROOM" | cut -c 1-8)"
@@ -762,7 +732,7 @@ on_start() {
     (umask 077 && mkdir -p "$SESSIONS" && [ ! -L "$MARKER" ] && printf 'fork %s\n' "$PARENT" > "$MARKER") 2> /dev/null
     find "$SESSIONS" -type f -mtime +30 -exec rm -f {} + 2> /dev/null
   fi
-  if pick bound; then plog "start-in-space"; bound_text; auto_update_say; exit 0; fi
+  if pick bound; then plog "start-in-space"; refresh_kit; bound_text; kit_stale_note; auto_update_say; exit 0; fi
   if [ "$FORK" -eq 1 ]; then
     plog "start-copy from=$(printf '%s' "$PARENT" | cut -c 1-8)"
     # Only worth saying when the original chat was in a space (otherwise there is nothing to mix up).
@@ -805,6 +775,7 @@ on_end() {
 . "$HERE/snapwork-onoff.sh" || exit 0
 . "$HERE/snapwork-codex.sh" || exit 0
 . "$HERE/snapwork-update.sh" || exit 0
+. "$HERE/snapwork-share.sh" || exit 0
 
 case $EVENT in
   prompt) on_prompt ;;

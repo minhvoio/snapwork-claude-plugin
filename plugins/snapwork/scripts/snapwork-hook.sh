@@ -1,5 +1,6 @@
 #!/bin/sh
 # snapwork-hook.sh: listen for SnapWork messages with POSIX sh + curl only (no node, no jq).
+# snapwork-hook-version: 2
 #
 #   snapwork-hook.sh [--event Stop|UserPromptSubmit|SessionStart|SessionEnd] [--room ID [--agent ID]] [--rewake]
 #   snapwork-hook.sh --once --room ID [--agent ID]          (one message, then exit 0)
@@ -7,6 +8,13 @@
 #   snapwork-hook.sh --uninstall [--global] --room ID [--agent ID]
 #   snapwork-hook.sh --say --room ID [--agent ID] -- <text...>   (post a message; prints "sent")
 #   snapwork-hook.sh --answer --room ID [--agent ID] <code>      (answer an old code check; since 5.9 the check is a hello sent with --say)
+#   snapwork-hook.sh --say --room ID [--agent ID] --file <path> -- <note>   (share a file from the project folder)
+#   snapwork-hook.sh --fetch --room ID [--agent ID] <file id>    (save a shared file into snapwork-files/)
+#
+# --file and --fetch are done by snapwork-files.sh next to this script (see its header): files
+# only from the project folder (the saved "project", else the current folder), never .env, .git,
+# ~/.snapwork or ~/.ssh; a big file uploads in the background, and if it fails for good the next
+# wake of this listener says why.
 #
 # Several agents can share one space on one machine (Claude Code in two project folders, or Claude
 # Code and Codex). Each has its own connection, cursor and listener, named by the space id and the
@@ -26,7 +34,7 @@
 # the user (in Claude Code: `! sh ~/.snapwork/snapwork-hook.sh --install --room <id>`), because
 # auto mode lets an agent not write its own settings. --uninstall removes that room's entry.
 # --install also adds narrow allow rules to "permissions.allow": Bash(sh ~/.snapwork/snapwork-hook.sh
-# --say --room *) and the same for --answer (plus the absolute path written into the hook, unless the
+# --say --room *) and the same for --answer and --fetch (plus the absolute path written into the hook, unless the
 # script lives under the project folder), so replies run in Claude Code auto mode without a prompt.
 # It adds deny rules Edit(~/.snapwork/**) and Write(~/.snapwork/**) (and //<absolute dir>/**) so an
 # agent cannot rewrite the script it is allowed to run. The old broad `... snapwork-hook.sh *` rule
@@ -93,6 +101,7 @@ ACTION=
 FAIL=0
 TEXT=
 CODE_ARG=
+FILE_ARG=
 GLOBAL=0
 LEGACY=0
 BLOCKING=0
@@ -102,19 +111,21 @@ BACKOFF_BASE=${SNAPWORK_BACKOFF_BASE_S:-2}
 MAX_BACKOFF=60
 
 say_err() { printf 'snapwork-hook: %s\n' "$1" >&2; }
+FILES_SCRIPT=$(dirname "$0")/snapwork-files.sh
 
 while [ $# -gt 0 ]; do
   case $1 in
     --rewake) REWAKE=1 ;;
     --status) STATUS=1 ;;
     --once) ONCE=1; REWAKE=1 ;;
-    --say | --answer | --install | --uninstall)
+    --say | --answer | --fetch | --install | --uninstall)
       # One action per call: a later --install can never turn an approved --say into an install.
       NEW=${1#--}
       if [ -n "$ACTION" ] && [ "$ACTION" != "$NEW" ]; then say_err "one action at a time"; exit 1; fi
       ACTION=$NEW
-      case $NEW in say | answer) FAIL=1 ;; esac
+      case $NEW in say | answer | fetch) FAIL=1 ;; esac
       ;;
+    --file) shift; FILE_ARG=${1:-} ;;
     --legacy-file) LEGACY=1 ;;
     --) shift; TEXT="$*"; break ;;
     --global) GLOBAL=1 ;;
@@ -123,7 +134,7 @@ while [ $# -gt 0 ]; do
     --room) shift; ROOM=${1:-} ;;
     --agent) shift; AGENT=${1:-} ;;
     *)
-      if [ "$ACTION" = answer ] && [ -z "$CODE_ARG" ]; then CODE_ARG=$1; else say_err "unknown argument"; exit "$FAIL"; fi
+      if { [ "$ACTION" = answer ] || [ "$ACTION" = fetch ]; } && [ -z "$CODE_ARG" ]; then CODE_ARG=$1; else say_err "unknown argument"; exit "$FAIL"; fi
       ;;
   esac
   shift
@@ -261,7 +272,8 @@ if [ "$ACTION" = install ] || [ "$ACTION" = uninstall ]; then
   fi
   HOOK_TILDE="~/.snapwork/snapwork-hook.sh"
   ALLOW_RULES="Bash(sh $HOOK_TILDE --say --room *)
-Bash(sh $HOOK_TILDE --answer --room *)"
+Bash(sh $HOOK_TILDE --answer --room *)
+Bash(sh $HOOK_TILDE --fetch --room *)"
   DENY_RULES="Edit(~/.snapwork/**)
 Write(~/.snapwork/**)"
   STALE_RULES="Bash(sh $HOOK_TILDE *)
@@ -271,7 +283,8 @@ Bash(sh $SELF_ABS *)"
     *)
       ALLOW_RULES="$ALLOW_RULES
 Bash(sh $SELF_ABS --say --room *)
-Bash(sh $SELF_ABS --answer --room *)"
+Bash(sh $SELF_ABS --answer --room *)
+Bash(sh $SELF_ABS --fetch --room *)"
       DENY_RULES="$DENY_RULES
 Edit(/$SELF_DIR/**)
 Write(/$SELF_DIR/**)"
@@ -642,6 +655,33 @@ post_json() {
   exit 1
 }
 
+# Files go to snapwork-files.sh (next to this script) with the checked connection and the key on
+# stdin. A connection of the one-line setup ("hookSha") must pin it too ("filesSha"). It runs from
+# a private copy, and the copy is what gets checked, so the bytes checked are the bytes run.
+files_ok() {
+  [ -r "$FILES_SCRIPT" ] || return 1
+  want=$(json_field filesSha "$STATE" 2> /dev/null)
+  [ -n "$want" ] || [ -z "$(json_field hookSha "$STATE" 2> /dev/null)" ] || return 1
+  FILES_COPY=$(umask 077 && mktemp "$HOME_DIR/.copy.XXXXXX" 2> /dev/null) || return 1
+  cp "$FILES_SCRIPT" "$FILES_COPY" 2> /dev/null || { rm -f "$FILES_COPY"; return 1; }
+  [ -n "$want" ] || return 0
+  have=$({ sha256sum < "$FILES_COPY" || shasum -a 256 < "$FILES_COPY"; } 2> /dev/null | cut -d ' ' -f 1)
+  [ "$have" = "$want" ] || { rm -f "$FILES_COPY"; return 1; }
+}
+if [ "$ACTION" = fetch ] || { [ "$ACTION" = say ] && [ -n "$FILE_ARG" ]; }; then
+  files_ok || { printf 'failed: file sending needs the newer SnapWork scripts: run the setup line again to get file sending\n'; exit 1; }
+  trap 'rm -f "$FILES_COPY"' EXIT
+  PROJECT_DIR=$(json_field project "$STATE" 2> /dev/null)
+  [ -n "$PROJECT_DIR" ] || PROJECT_DIR=$(pwd -P)
+  if [ "$ACTION" = fetch ]; then
+    printf '%s\n' "$KEY" | sh "$FILES_COPY" fetch --gateway "$GATEWAY" --room "$ROOM" ${AGENT:+--agent "$AGENT"} \
+      --project "$PROJECT_DIR" --space "$(json_field spaceName "$STATE" 2> /dev/null)" "$CODE_ARG"
+    exit $?
+  fi
+  printf '%s\n' "$KEY" | sh "$FILES_COPY" send --gateway "$GATEWAY" --room "$ROOM" ${AGENT:+--agent "$AGENT"} \
+    --project "$PROJECT_DIR" --file "$FILE_ARG" -- "$TEXT"
+  exit $?
+fi
 if [ "$ACTION" = say ]; then
   [ -n "$TEXT" ] || { say_err "nothing to say: pass the text after --"; exit 1; }
   post_json say "{\"text\":\"$(json_text "$TEXT")\"}"
@@ -816,10 +856,24 @@ at_deadline() {
   exit 0
 }
 
+# A background upload of this agent that failed for good: told like a message, once.
+NEWS_AS=prompt
+[ "$EVENT" = Stop ] && NEWS_AS=stop
+[ "$REWAKE" -eq 1 ] && NEWS_AS=rewake
+[ "$ONCE" -eq 1 ] && NEWS_AS=once
+files_news() {
+  files_ok || return 0
+  sh "$FILES_COPY" news --room "$ROOM" ${AGENT:+--agent "$AGENT"} --as "$NEWS_AS"
+  rc=$?
+  rm -f "$FILES_COPY"
+  [ "$rc" -eq 3 ] || exit "$rc"
+}
+
 failures=0
 denied=0
 while :; do
   lock_is_mine || exit 0
+  files_news
   request
   case $CODE in
     200)

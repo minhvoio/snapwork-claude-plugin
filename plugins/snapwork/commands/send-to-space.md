@@ -1,6 +1,6 @@
 ---
-description: Send something from this conversation to this chat's snapwork space
-argument-hint: <what to send, for example "this summary" or "the plan we agreed">
+description: Send something from this conversation, or a file from this folder, to this chat's snapwork space
+argument-hint: <what to send, for example "this summary", "the plan we agreed" or "this file: report.pdf">
 disable-model-invocation: true
 ---
 The person wants this sent to this chat's SnapWork space:
