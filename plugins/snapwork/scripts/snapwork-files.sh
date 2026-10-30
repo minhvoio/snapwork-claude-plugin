@@ -1,6 +1,6 @@
 #!/bin/sh
 # snapwork-files.sh: send and fetch SnapWork files with POSIX sh + curl only (M6.2).
-# snapwork-files-version: 3
+# snapwork-files-version: 4
 #
 # snapwork-hook.sh hands its file commands to this script (it lives next to it, in ~/.snapwork),
 # after it has found the connection and checked the gateway, the key and, when the setup pinned it,
@@ -251,7 +251,7 @@ if [ "$MODE" = news ]; then
     if [ -n "$path" ] && [ "$(shown "$path" 400)" = "$path" ]; then
       again=" Send it again with: sh ~/.snapwork/snapwork-hook.sh --say --room $ROOM${AGENT:+ --agent $AGENT} --file '$path' -- '<note>'"
     fi
-    out="${out:+$out$NL}SnapWork: your file \"$name\" was not sent to the space: $(shown_text "${reason:-it failed}"). The space did not get it.$again"
+    out="${out:+$out$NL}SnapWork: your file \"$name\" was not sent to the room: $(shown_text "${reason:-it failed}"). The room did not get it.$again"
   done
   [ -n "$out" ] || exit 3
   json() { printf '%s' "$(json_text "$out")"; }
@@ -337,7 +337,7 @@ share() {
     case $code in 2??) return 0 ;; esac
   fi
   REASON=$(reason_of "$WORK/said")
-  REASON="the file is uploaded as $FILE_ID but the space did not take the message (${REASON:-HTTP $code}); it is kept 24 hours unshared"
+  REASON="the file is uploaded as $FILE_ID but the room did not take the message (${REASON:-HTTP $code}); it is kept 24 hours unshared"
   return 1
 }
 
@@ -484,7 +484,7 @@ if [ "$MODE" = send ]; then
   else
     printf '%s\n' "$KEY" | (trap '' HUP && exec sh "$STATUS_DIR/files.sh" run "$STATUS_DIR") > "$STATUS_DIR/log" 2>&1 &
   fi
-  say_line "uploading $name, $(human_size "$SIZE"), in the background; the space sees it when it is done"
+  say_line "uploading $name, $(human_size "$SIZE"), in the background; the room sees it when it is done"
   exit 0
 fi
 
@@ -504,7 +504,7 @@ code=$(api -o /dev/null -D "$WORK/h" -I "$url")
 case $code in
   200) ;;
   000) failed "could not reach the gateway" ;;
-  404) failed "there is no file $FILE_ID in this space (wrong id, or it was removed)" ;;
+  404) failed "there is no file $FILE_ID in this room (wrong id, or it was removed)" ;;
   *) failed "the gateway answered HTTP $code" ;;
 esac
 # The last value of one response header, its name in any case.
@@ -569,7 +569,7 @@ if [ "$have" -lt "$size" ]; then
       if [ "$start" != "$have" ]; then rm -f "$part"; failed "the gateway answered from another place in the file: run the same command again"; fi
       ;;
     200 | 000) ;;
-    404) failed "there is no file $FILE_ID in this space (wrong id, or it was removed)" ;;
+    404) failed "there is no file $FILE_ID in this room (wrong id, or it was removed)" ;;
     *) failed "the gateway answered HTTP $code" ;;
   esac
 fi

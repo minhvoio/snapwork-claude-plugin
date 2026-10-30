@@ -17,7 +17,7 @@ api() {
   key=$(field key "$STATE")
   case $key in '' | *[!A-Za-z0-9._~+/=-]*) key=; return 0 ;; esac
   # A connection saved for another gateway never sends its key here.
-  [ "$(field gateway "$STATE")" = "$GATEWAY" ] || { key=; return 0; }
+  case $(field gateway "$STATE") in "$GATEWAY" | "$ALT_GATEWAY") ;; *) key=; return 0 ;; esac
   command -v curl > /dev/null 2>&1 || { key=; return 0; }
   work_dir || { key=; return 0; }
   API_BODY=$WORK/api.body
@@ -83,7 +83,7 @@ gone() {
   case $1 in
     401) why="you were removed from \"$space\" (or its key no longer works)" ;;
     403) why="SnapWork no longer lets this chat's member listen in \"$space\" (it was refused, for example because it did not say hello in time)" ;;
-    *) why="the space \"$space\" no longer exists" ;;
+    *) why="the room \"$space\" no longer exists" ;;
   esac
   stop_local_listener
   # Kept aside for a person to look at, without the key (it no longer works anyway).
@@ -198,7 +198,7 @@ join_space_status() {
       case $(body_word state) in
         pending)
           plog "status-pending"
-          printf 'SnapWork: this chat is in the space "%s" as "%s"; SnapWork is still adding it and will ask it to say hello there. Tell the person this in one line.\n' "$space" "$name"
+          printf 'SnapWork: this chat is in the room "%s" as "%s"; SnapWork is still adding it and will ask it to say hello there. Tell the person this in one line.\n' "$space" "$name"
           exit 0 ;;
         refused) gone 403 ;;
       esac ;;
@@ -207,6 +207,6 @@ join_space_status() {
   if space_missing; then gone 404; fi
   if [ "$API_STATUS" = 403 ] && gate_refused; then gone 403; fi
   plog "status-in-space"
-  printf 'SnapWork: this chat is in the space "%s" as "%s" and listens; messages for you arrive by themselves after each turn. Tell the person this in one line.\n' "$space" "$name"
+  printf 'SnapWork: this chat is in the room "%s" as "%s" and listens; messages for you arrive by themselves after each turn. Tell the person this in one line.\n' "$space" "$name"
   exit 0
 }

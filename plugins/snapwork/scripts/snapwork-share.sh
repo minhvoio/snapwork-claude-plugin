@@ -30,17 +30,17 @@ send_to_space() {
   if pick bound || try_adopt; then
     if is_off; then
       plog "send-off"
-      printf 'SnapWork: this chat is turned off in the space "%s", so it posts nothing there; '"$CMD_JOIN"' turns it back on. Tell the person this in one line.\n' "$(space_of "$STATE")"
+      printf 'SnapWork: this chat is turned off in the room "%s", so it posts nothing there; '"$CMD_JOIN"' turns it back on. Tell the person this in one line.\n' "$(space_of "$STATE")"
       exit 0
     fi
   elif ! pick setup; then
     plog "send-none"
-    printf 'SnapWork: this chat is not in a space yet, so nothing can be posted. Post nothing, and tell the person in one line to paste the invitation link on its own first.\n'
+    printf 'SnapWork: this chat is not in a room yet, so nothing can be posted. Post nothing, and tell the person in one line to paste the invitation link on its own first.\n'
     exit 0
   fi
   plog "send-asked"
   refresh_kit
-  printf 'SnapWork: the person wants something sent to the space "%s", as "%s". What they wrote after the command says what, often by pointing at this conversation ("this", "what we found", "your answer"); with nothing after it, send what you just told them. Work out what they mean, do any work they asked for first, then write one message for the people and agents in the space, not your working notes. ' \
+  printf 'SnapWork: the person wants something sent to the room "%s", as "%s". What they wrote after the command says what, often by pointing at this conversation ("this", "what we found", "your answer"); with nothing after it, send what you just told them. Work out what they mean, do any work they asked for first, then write one message for the people and agents in the room, not your working notes. ' \
     "$(space_of "$STATE")" "$(agent_of "$STATE")"
   if [ "$APP" = codex ] && ! made_by_setup "$STATE"; then
     codex_block_rules
@@ -97,8 +97,11 @@ files_run() {
   mode=$1
   shift
   key=$(field key "$STATE")
-  case $key in '' | *[!A-Za-z0-9._~+/=-]*) printf 'failed: this chat has no usable key for the space\n'; return 1 ;; esac
-  [ "$(field gateway "$STATE")" = "$GATEWAY" ] || { printf 'failed: this space is on another gateway\n'; return 1; }
+  case $key in '' | *[!A-Za-z0-9._~+/=-]*) printf 'failed: this chat has no usable key for the room\n'; return 1 ;; esac
+  case $(field gateway "$STATE") in
+    "$GATEWAY" | "$ALT_GATEWAY") ;;
+    *) printf 'failed: this room is on another gateway\n'; return 1 ;;
+  esac
   project=$(field project "$STATE")
   [ -d "$project" ] || project=$CWD
   out=$(cd "$project" 2> /dev/null && printf '%s\n' "$key" | sh "$HERE/snapwork-files.sh" "$mode" --gateway "$GATEWAY" \
@@ -140,7 +143,7 @@ codex_file_block() {
         || codex_not_posted attach-failed "the file was not sent: ${result#failed: }"
       plog "codex-attach $(printf '%s' "$result" | cut -c 1-9)"
       if [ "$result" = sent ]; then
-        printf 'SnapWork: your file %s was sent to the space with its note. Tell the person in one line; post no block about it.\n' "$path" >&2
+        printf 'SnapWork: your file %s was sent to the room with its note. Tell the person in one line; post no block about it.\n' "$path" >&2
       else
         printf 'SnapWork: %s (your file %s, with its note). Tell the person in one line; post no block about it.\n' "$result" "$path" >&2
       fi

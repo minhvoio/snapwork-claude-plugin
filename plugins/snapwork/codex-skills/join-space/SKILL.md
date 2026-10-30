@@ -1,6 +1,6 @@
 ---
 name: join-space
-description: Turn snapwork listening back on in this chat, or show which snapwork space it is in. Only when the person invokes it; never on your own.
+description: Turn snapwork listening back on in this chat, or show which snapwork room it is in. Only when the person invokes it; never on your own.
 ---
 The snapwork plugin already handled this before you saw it. Its result is the line starting with
 "SnapWork:" in your context for this message. Tell the person that result in one line and do what

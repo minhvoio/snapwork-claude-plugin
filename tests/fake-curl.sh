@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-if [ "$data" = @- ]; then cat > "$FAKE_DIR/join_body"; else cat > /dev/null; fi
+if [ "$data" = @- ]; then cat > "$FAKE_DIR/join_body"; else cat > "$FAKE_DIR/stdin_last"; fi
 space() { grep "^$1|" "$FAKE_DIR/spaces" | head -n 1; }
 code_status() { [ -z "$wfmt" ] || printf '%s' "$1"; }
 answer() {
@@ -124,6 +124,34 @@ case $url in
     off=null
     [ ! -e "$FAKE_DIR/off_$r" ] || off=1792000000000
     answer 200 "{\"listening\":{\"state\":\"$state\",\"tried\":[\"hook\"],\"left\":0,\"attempt\":null,\"notice\":null,\"off_at\":$off}}" ;;
+  */c/*/connect)
+    # My agents: connect_status (a file) forces an answer; a Bearer key in curl's config reuses
+    # the computer (no key back), unless key_refused exists (401).
+    code=${url%/connect}
+    code=${code##*/}
+    echo "connect $code" >> "$FAKE_DIR/calls"
+    printf '%s' "$data" > "$FAKE_DIR/connect_body"
+    [ ! -e "$FAKE_DIR/connect_status" ] || answer "$(cat "$FAKE_DIR/connect_status")" '{"error":{"code":"X","message":"x"}}'
+    if grep -q 'Bearer swc_' "$FAKE_DIR/stdin_last" 2> /dev/null; then
+      [ ! -e "$FAKE_DIR/key_refused" ] || answer 401 '{"error":{"code":"UNAUTHORIZED","message":"Unknown computer key"}}'
+      answer 201 '{"agent":{"id":"aaaaaaaa-1111-4000-8000-000000000001","name":"Claude","runtime":"claude-code"},"computer":{"id":"cccccccc-1111-4000-8000-000000000001","name":"Mac"}}'
+    fi
+    answer 201 '{"agent":{"id":"aaaaaaaa-1111-4000-8000-000000000001","name":"Claude","runtime":"claude-code"},"computer":{"id":"cccccccc-1111-4000-8000-000000000001","name":"Mac"},"key":"swc_testcomputerkey123"}' ;;
+  */c/*)
+    # The look-up before the confirm: lookup_status forces an answer, lookup_runtime the app.
+    echo "connect-lookup ${url##*/}" >> "$FAKE_DIR/calls"
+    [ ! -e "$FAKE_DIR/lookup_status" ] || answer "$(cat "$FAKE_DIR/lookup_status")" '{"error":{"code":"X","message":"x"}}'
+    rt=$(cat "$FAKE_DIR/lookup_runtime" 2> /dev/null || echo claude-code)
+    answer 200 "{\"account\":{\"name\":\"Minh Vo\",\"email\":\"m•••@example.com\"},\"runtime\":\"$rt\",\"expires_at\":1}" ;;
+  */computer/work/*)
+    echo "report ${url##*/} $data" >> "$FAKE_DIR/calls"
+    answer 200 '{"add":{}}' ;;
+  */computer/work\?*)
+    echo "work" >> "$FAKE_DIR/calls"
+    [ ! -e "$FAKE_DIR/work_status" ] || answer "$(cat "$FAKE_DIR/work_status")" ''
+    # Byte for byte (a command substitution would drop the last line break).
+    if [ -f "$FAKE_DIR/work_lines" ]; then cp "$FAKE_DIR/work_lines" "$out"; else : > "$out"; fi
+    code_status 200 ;;
   *) exit 7 ;;
 esac
 exit 0

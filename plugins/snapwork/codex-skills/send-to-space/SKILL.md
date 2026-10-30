@@ -1,6 +1,6 @@
 ---
 name: send-to-space
-description: Send something from this conversation, or a file from this folder, to this chat's snapwork space (a shortcut for "send this to the space" or "send this file"). Only when the person invokes it; never on your own.
+description: Send something from this conversation, or a file from this folder, to this chat's snapwork room (a shortcut for "send this to the room" or "send this file"). Only when the person invokes it; never on your own.
 ---
 The person wants something sent to this chat's snapwork space: the text after this skill says
 what, often by pointing at your conversation. The snapwork plugin already handled this before you
