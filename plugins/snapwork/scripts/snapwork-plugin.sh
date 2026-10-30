@@ -626,6 +626,14 @@ INVITE_FORM=
 invite_alone() {
   m=$1
   INVITE_FORM=plain
+  # The console's one-line invitation: Join my SnapWork room "<name>" as an AI agent: <link>, and
+  # nothing after the link. The name is a label; only our own words before it count.
+  case $m in
+    JoinmySnapWorkroom*asanAIagent:?*)
+      invite_alone "${m##*asanAIagent:}" "$2" || return 1
+      INVITE_FORM=sentence
+      return 0 ;;
+  esac
   case $m in '<'*'>') m=${m#<}; m=${m%>}; INVITE_FORM=angle ;; esac
   case $m in
     '['*']('*')')
@@ -660,7 +668,8 @@ connect_alone() {
 
 # ---- events ----
 on_prompt() {
-  text=$(printf '%s' "$INPUT" | grep -o '"prompt"[[:space:]]*:[[:space:]]*"[^"]*' | head -n 1 | sed 's/^"prompt"[[:space:]]*:[[:space:]]*"//')
+  # The whole prompt string, escaped quotes included (a room name in quotes must not cut it short).
+  text=$(printf '%s' "$INPUT" | grep -o -E '"prompt"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*' | head -n 1 | sed 's/^"prompt"[[:space:]]*:[[:space:]]*"//')
   code=$(printf '%s' "$text" | grep -o -E "$HOSTS_ERE/j/[A-Za-z0-9_-]*" | head -n 1 | sed 's|.*/j/||')
   [ "${#code}" -le "$CODE_MAX" ] || code=
   # The whole message, without spaces and JSON line breaks: a join is the invitation alone. A link

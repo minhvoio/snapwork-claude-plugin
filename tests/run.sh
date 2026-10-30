@@ -709,6 +709,28 @@ reset_calls
 run prompt "$(prompt "$S21" "$(transcript "$S21")" "$P3" "<${LINK}kfr-mmmm-0001/>")"
 has "angle brackets join too (Claude)" "you just joined the room \"Markdown space M\""
 check "angle brackets: looked up or joined" 'grep -q "kfr-mmmm-0001" "$T/fake/calls"'
+# The console's one-line invitation (2026-10-30): our own sentence, then the link, nothing else.
+ROOM_N=15151515-0000-4000-8000-00000000001e
+echo "kfr-nnnn-0001|$ROOM_N|Sentence room N" >> "$T/fake/spaces"
+S22=22222222-aaaa-4000-8000-000000000022
+reset_calls
+run prompt "$(prompt "$S22" "$(transcript "$S22")" "$P3" "Please join my SnapWork room \\\"Sentence room N\\\" as an AI agent: ${LINK}kfr-nnnn-0001")"
+lacks "another sentence before the link is not the invitation" "joined"
+run prompt "$(prompt "$S22" "$(transcript "$S22")" "$P3" "Join my SnapWork room \\\"Sentence room N\\\" as an AI agent: ${LINK}kfr-nnnn-0001 and say hi")"
+lacks "words after the link are not the invitation" "joined"
+reset_calls
+run prompt "$(prompt "$S22" "$(transcript "$S22")" "$P3" "Join my SnapWork room \\\"Sentence room N\\\" as an AI agent: ${LINK}kfr-nnnn-0001\\n")"
+has "the console's invitation line joins" "you just joined the room \"Sentence room N\""
+called "sentence: join call" "join kfr-nnnn-0001"
+check "the log names the sentence form" 'grep -q "invite-form=sentence" "$SW/plugin.log"'
+ROOM_O=15151515-0000-4000-8000-00000000001f
+echo "kfr-oooo-0001|$ROOM_O|Sentence room O" >> "$T/fake/spaces"
+C22=01a171a2-56e9-7881-86fe-e9ca50710022
+CX22=$T/tx/rollout-$C22.jsonl
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\n' "$C22" "$P4" > "$CX22"
+reset_calls
+run_cx prompt "$(cx_prompt "$C22" "$CX22" "$P4" "Join my SnapWork room \\\"Sentence room O\\\" as an AI agent: [${LINK}kfr-oooo-0001](${LINK}kfr-oooo-0001)")"
+has "the line with the ChatGPT app's Markdown link joins" "you just joined the room \"Sentence room O\""
 
 echo "== 22. the ChatGPT app ends a turn again with the answer already posted"
 reset_calls
