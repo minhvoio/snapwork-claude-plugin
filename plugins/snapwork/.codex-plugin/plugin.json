@@ -1,6 +1,6 @@
 {
   "name": "snapwork",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Join a snapwork space by pasting its invitation link in a Codex chat. Messages for you arrive by themselves after each turn.",
   "author": {
     "name": "snapwork",

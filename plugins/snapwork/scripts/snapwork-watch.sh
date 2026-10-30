@@ -8,8 +8,11 @@
 # background chat whose first message is the invitation, so the copy joins the space like any
 # pasted invitation (the plugin does the join), and tells SnapWork the copy's session id, or why it
 # could not start it in a fixed word (no_runtime, not_trusted, home_gone, fork_failed).
+# An agent claimed from a room (7.6) has a folder home instead: the line's 7th field says "folder"
+# and the watcher starts a fresh background chat in that folder (no copy), so no room's talk
+# comes along.
 #
-# What it never does: run anything but the one fork command, from a home chat this computer
+# What it never does: run anything but the one fork (or fresh-chat) command, from a home this computer
 # registered (homes/<id>.json, written by the plugin when the person connected the chat), in that
 # chat's own folder as recorded here (never a folder the gateway names), with the invitation as
 # the only prompt. It never forks a chat that is in a space. The computer key goes to curl through
@@ -27,7 +30,7 @@ set -u
 GATEWAY=https://space.snapwork.ai
 # The same gateway's new main address: its invitations are accepted too (room_word_and_address).
 ALT_GATEWAY=https://room.snapwork.ai
-VERSION=0.3.0
+VERSION=0.3.2
 SNAPWORK_HOME=${SNAPWORK_HOME:-${HOME:-}/.snapwork}
 COMPUTER_FILE=$SNAPWORK_HOME/computer.json
 HOMES=$SNAPWORK_HOME/homes
@@ -98,12 +101,18 @@ report() {
 }
 failed() { report "$1" "{\"state\":\"failed\",\"failure\":\"$2\"}"; wlog "failed add=$(short "$1") why=$2"; }
 
-# The home chat this computer registered, or nothing.
+# home_file <id> <kind>: the home this computer registered, or nothing. A chat home names its
+# session; a folder home (7.6) says "kind": "folder" and names itself, and has no session.
 HOME_FILE=
 home_file() {
   HOME_FILE=$HOMES/$1.json
   { [ -f "$HOME_FILE" ] && [ ! -L "$HOME_FILE" ]; } || return 1
-  [ "$(field session "$HOME_FILE")" = "$1" ]
+  if [ "$2" = folder ]; then
+    [ "$(field kind "$HOME_FILE")" = folder ] && [ "$(field home "$HOME_FILE")" = "$1" ] \
+      && [ -z "$(field session "$HOME_FILE")" ]
+  else
+    [ "$(field kind "$HOME_FILE")" != folder ] && [ "$(field session "$HOME_FILE")" = "$1" ]
+  fi
 }
 
 # A chat in a space is never forked: its copy would carry that space's talk.
@@ -115,15 +124,21 @@ in_a_space() {
   return 1
 }
 
-# fork_claude <add> <home> <project> <invitation> <name>
-fork_claude() {
+# start_claude <add> <home> <project> <invitation> <name> <kind>: a chat home is copied
+# (--resume <home> --fork-session); a folder home gets a fresh chat in its folder (no --resume), so
+# no room's talk ever comes along.
+start_claude() {
   runner=$(field runner "$HOME_FILE")
   { [ -n "$runner" ] && [ -x "$runner" ]; } || runner=$(command -v claude 2> /dev/null)
   case $runner in /*) [ -x "$runner" ] || runner= ;; *) runner= ;; esac
   [ -n "$runner" ] || { failed "$1" no_runtime; return 0; }
   # Only absolute folders: an empty or relative entry would look tools up in the project folder.
   chat_path=$(field path "$HOME_FILE" | tr ':' '\n' | grep '^/' | paste -s -d ':' -)
-  out=$(cd "$3" && PATH=${chat_path:-$PATH} "$runner" --resume "$2" --fork-session --bg --name "$5" "$4" 2>&1)
+  if [ "$6" = folder ]; then
+    out=$(cd "$3" && PATH=${chat_path:-$PATH} "$runner" --bg --name "$5" "$4" 2>&1)
+  else
+    out=$(cd "$3" && PATH=${chat_path:-$PATH} "$runner" --resume "$2" --fork-session --bg --name "$5" "$4" 2>&1)
+  fi
   case $out in *"not trusted"*) failed "$1" not_trusted; return 0 ;; esac
   id8=$(printf '%s' "$out" | sed -n 's/.*backgrounded[^0-9a-f]*\([0-9a-f]\{8\}\).*/\1/p' | head -n 1)
   [ -n "$id8" ] || { failed "$1" fork_failed; return 0; }
@@ -139,9 +154,12 @@ fork_claude() {
   fi
 }
 
-# start_one <add> <runtime> <home> <invitation> <name>: one line of work.
+# start_one <add> <runtime> <home> <invitation> <name> <kind>: one line of work. The kind (7.6) is
+# "chat" or "folder"; a line without it (an older gateway) is a chat.
 start_one() {
   valid_uuid "$1" || { wlog "bad-item"; return 0; }
+  kind=${6:-chat}
+  case $kind in chat | folder) ;; *) wlog "bad-item add=$(short "$1")"; return 0 ;; esac
   valid_uuid "$3" || { failed "$1" home_gone; return 0; }
   case $4 in
     "$GATEWAY/j/"*) code=${4#"$GATEWAY/j/"} ;;
@@ -151,17 +169,17 @@ start_one() {
   case $code in '' | *[!A-Za-z0-9_-]*) wlog "bad-item add=$(short "$1")"; return 0 ;; esac
   name=$5
   case $name in '' | -* | *[\"\'\`\$\\\;\&\|\<\>\(\)\{\}\*\?\[\]\~\#!]*) name=SnapWork ;; esac
-  home_file "$3" || { failed "$1" home_gone; return 0; }
+  home_file "$3" "$kind" || { failed "$1" home_gone; return 0; }
   project=$(field project "$HOME_FILE")
   case $project in /*) ;; *) failed "$1" home_gone; return 0 ;; esac
   [ -d "$project" ] || { failed "$1" home_gone; return 0; }
-  if in_a_space "$3"; then
+  if [ "$kind" = chat ] && in_a_space "$3"; then
     wlog "home-in-space add=$(short "$1")"
     failed "$1" home_gone
     return 0
   fi
   case $2 in
-    claude-code) fork_claude "$1" "$3" "$project" "$4" "$name" ;;
+    claude-code) start_claude "$1" "$3" "$project" "$4" "$name" "$kind" ;;
     *) failed "$1" no_runtime ;;
   esac
 }
@@ -181,9 +199,11 @@ poll() {
     *) return 1 ;;
   esac
   # `|| [ -n "$kind" ]`: a last line without its line break still counts.
-  while IFS=$TAB read -r kind add runtime home invitation name || [ -n "${kind:-}" ]; do
-    [ "$kind" = start ] || continue
-    start_one "$add" "$runtime" "$home" "$invitation" "$name"
+  while IFS=$TAB read -r what add runtime home invitation name homekind || [ -n "${what:-}" ]; do
+    [ "$what" = start ] || continue
+    # A tab left in the last field (a line with more fields than this watcher knows) is not a name.
+    case $homekind in *"$TAB"*) homekind=${homekind%%"$TAB"*} ;; esac
+    start_one "$add" "$runtime" "$home" "$invitation" "$name" "$homekind"
   done < "$WORK/work"
   return 0
 }

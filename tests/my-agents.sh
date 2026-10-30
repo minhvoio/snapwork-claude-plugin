@@ -11,7 +11,7 @@ SCRIPTS=$ROOT/plugins/snapwork/scripts
 PLUGIN=$SCRIPTS/snapwork-plugin.sh
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/bin" "$T/home/proj" "$T/home/proj2" "$T/fake" "$T/tx"
+mkdir -p "$T/bin" "$T/home/proj" "$T/home/proj2" "$T/home/proj3" "$T/fake" "$T/tx"
 cp "$ROOT/tests/fake-curl.sh" "$T/bin/curl"
 # A claude that records how it was called and answers like Claude Code 2.1.312's --bg.
 cat > "$T/bin/claude" << 'EOF'
@@ -36,6 +36,7 @@ CONNECT=https://space.snapwork.ai/c/
 INVITE=https://space.snapwork.ai/j/
 ROOM_A=aaaaaaaa-0000-4000-8000-000000000001
 printf 'kfr-aaaa-0001|%s|Space A\n' "$ROOM_A" > "$T/fake/spaces"
+for n in 2 3 4 5 6; do printf 'kfr-aaaa-000%s|aaaaaaaa-0000-4000-8000-00000000000%s|Space %s\n' "$n" "$n" "$n" >> "$T/fake/spaces"; done
 : > "$T/fake/calls"
 S1=11111111-aaaa-4000-8000-000000000001
 S2=22222222-aaaa-4000-8000-000000000002
@@ -52,7 +53,7 @@ has() { if grep -q -F -e "$2" "$T/out"; then ok; else bad "$1 (wanted: $2)" "$(c
 called() { if grep -q -F -e "$2" "$T/fake/calls"; then ok; else bad "$1 (no call: $2)" "$(cat "$T/fake/calls")"; fi; }
 not_called() { if grep -q -F -e "$2" "$T/fake/calls"; then bad "$1 (unwanted call: $2)"; else ok; fi; }
 check() { if eval "$2"; then ok; else bad "$1"; fi; }
-reset() { : > "$T/fake/calls"; rm -f "$T/fake/connect_status" "$T/fake/key_refused" "$T/fake/claude_calls" "$T/fake/claude_untrusted" "$T/fake/work_status" "$T/fake/lookup_status" "$T/fake/lookup_runtime"; }
+reset() { : > "$T/fake/calls"; rm -f "$T/fake/claim_status" "$T/fake/claim_bodies" "$T/fake/connect_status" "$T/fake/key_refused" "$T/fake/claude_calls" "$T/fake/claude_untrusted" "$T/fake/work_status" "$T/fake/lookup_status" "$T/fake/lookup_runtime"; }
 
 transcript() { f=$T/tx/$1.jsonl; printf '{"type":"user","sessionId":"%s"}\n' "$1" > "$f"; printf '%s' "$f"; }
 prompt() { printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","hook_event_name":"UserPromptSubmit","prompt":"%s"}' "$1" "$2" "$3" "$4"; }
@@ -239,12 +240,157 @@ kill "$holder" 2> /dev/null
 not_called "a live watcher keeps its lock" "work"
 rm -f "$SW/watch.lock"
 
+echo "== 10. a join by invitation on a connected computer makes the agent the person's (7.6)"
+P3=$HOMEDIR/proj3
+S4=44444444-aaaa-4000-8000-000000000004
+S5=55555555-aaaa-4000-8000-000000000005
+S6=66666666-aaaa-4000-8000-000000000006
+S7=77777777-aaaa-4000-8000-000000000007
+S8=88888888-aaaa-4000-8000-000000000008
+home_id() { h=$(printf '%s' "$1" | sha256sum | cut -c 1-32); printf '%s-%s-%s-%s-%s' "$(echo "$h" | cut -c 1-8)" "$(echo "$h" | cut -c 9-12)" "$(echo "$h" | cut -c 13-16)" "$(echo "$h" | cut -c 17-20)" "$(echo "$h" | cut -c 21-32)"; }
+HID2=$(home_id "$P2")
+HID1=$(home_id "$P1")
+reset
+run prompt "$(prompt "$S4" "$(transcript "$S4")" "$P2" "${INVITE}kfr-aaaa-0002")"
+has "joined as usual" "you just joined the room \"Space 2\""
+called "and claimed" "claim"
+check "the claim names the folder's home id, the folder and the app" 'grep -q "\"home\":\"$HID2\",\"folder\":\"proj2\",\"runtime\":\"claude-code\"" "$T/fake/claim_bodies"'
+check "the claim carries the agent's key, in the body" 'grep -q "\"agent_key\":\"testkey" "$T/fake/claim_bodies"'
+not_called "no key on the command line" "KEY-IN-ARGV"
+check "the computer key went through curl's config" 'grep -q "Bearer swc_testcomputerkey123" "$T/fake/stdin_last"'
+check "the folder home is saved, owner only" '[ "$(ls -l "$SW/homes/$HID2.json" | cut -c 1-10)" = "-rw-------" ]'
+check "it is a folder home with its full path" 'grep -q "\"kind\": \"folder\"" "$SW/homes/$HID2.json" && grep -q "\"project\": \"$P2\"" "$SW/homes/$HID2.json" && grep -q "\"home\": \"$HID2\"" "$SW/homes/$HID2.json"'
+check "a folder home has no session (an old watcher finds no chat)" '! grep -q "\"session\"" "$SW/homes/$HID2.json"'
+check "the folder home is valid JSON" 'python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$SW/homes/$HID2.json"'
+check "the room's connection says it was claimed" 'grep -q "\"claimed\": \"$HID2\"" "$SW"/rooms/aaaaaaaa-0000-4000-8000-000000000002.*.json'
+check "the log says so, without the key" 'grep -q "claim-ok status=201" "$SW/plugin.log" && ! grep -q "testkey" "$SW/plugin.log"'
+
+echo "== 10a2. a claim refreshes an older watcher copy (computers connected on 0.3.0)"
+reset
+sed -i.bak 's/^VERSION=.*/VERSION=0.3.0/' "$SW/snapwork-watch.sh" && rm -f "$SW/snapwork-watch.sh.bak"
+SA2=a2a2a2a2-aaaa-4000-8000-0000000000a2
+printf 'kfr-aaaa-00a2|aaaaaaaa-0000-4000-8000-0000000000a2|Space A2\n' >> "$T/fake/spaces"
+run prompt "$(prompt "$SA2" "$(transcript "$SA2")" "$P2" "${INVITE}kfr-aaaa-00a2")"
+check "the watcher copy is the plugin's again" 'grep -q "^VERSION=0.3.2$" "$SW/snapwork-watch.sh"'
+check "and stays owner only" '[ "$(ls -l "$SW/snapwork-watch.sh" | cut -c 1-10)" = "-rwx------" ]'
+
+echo "== 10b. another chat in the same folder: the same home id"
+reset
+run prompt "$(prompt "$S5" "$(transcript "$S5")" "$P2" "${INVITE}kfr-aaaa-0003")"
+check "same home id for the same folder" 'grep -q "\"home\":\"$HID2\"" "$T/fake/claim_bodies"'
+
+echo "== 10c. a refused claim never spoils the join"
+reset
+printf '409' > "$T/fake/claim_status"
+run prompt "$(prompt "$S6" "$(transcript "$S6")" "$P3" "${INVITE}kfr-aaaa-0004")"
+has "joined all the same" "you just joined the room \"Space 4\""
+check "logged as refused" 'grep -q "claim-refused status=409" "$SW/plugin.log"'
+check "no folder home kept for a refused claim" '[ ! -f "$SW/homes/$(home_id "$P3").json" ]'
+
+echo "== 10d. a copy started by an add (a fork) does not claim"
+reset
+TXF=$T/tx/$S7.jsonl
+printf '{"type":"user","sessionId":"%s"}\n{"type":"user","sessionId":"%s"}\n' "$S1" "$S7" > "$TXF"
+run prompt "$(prompt "$S7" "$TXF" "$P1" "${INVITE}kfr-aaaa-0005")"
+has "the copy joined" "joined"
+not_called "no claim from a copy" "claim"
+check "its connection says it is a copy" 'grep -q "\"copy\": \"1\"" "$(grep -l "\"session\": \"$S7\"" "$SW"/rooms/*.json | head -n 1)"'
+
+echo "== 10e. no computer key: nothing is claimed and nothing leaves the computer"
+reset
+mv "$SW/computer.json" "$T/computer.json.kept"
+run prompt "$(prompt "$S8" "$(transcript "$S8")" "$P3" "${INVITE}kfr-aaaa-0006")"
+has "joined" "you just joined the room \"Space 6\""
+not_called "no claim without a connected computer" "claim"
+mv "$T/computer.json.kept" "$SW/computer.json"
+
+echo "== 10f. a connect claims every chat already in a room on this computer, once"
+reset
+R9=aaaaaaaa-0000-4000-8000-000000000009
+A9=00000000-0000-4000-8000-0000000000a9
+printf '{\n  "session": "%s",\n  "app": "claude",\n  "project": "%s",\n  "gateway": "https://space.snapwork.ai",\n  "roomId": "%s",\n  "agentId": "%s",\n  "spaceName": "Old room",\n  "agentName": "Claude",\n  "key": "testkeyold9"\n}\n' "$S2" "$P1" "$R9" "$A9" > "$SW/rooms/$R9.$A9.json"
+printf '{\n  "session": "%s",\n  "app": "claude",\n  "project": "%s",\n  "gateway": "https://evil.example.com",\n  "roomId": "%s",\n  "agentId": "%s",\n  "key": "testkeyevil"\n}\n' "$S2" "$P1" "$R9" "00000000-0000-4000-8000-0000000000b9" > "$SW/rooms/$R9.00000000-0000-4000-8000-0000000000b9.json"
+printf '{\n  "session": "%s",\n  "app": "claude",\n  "project": "relative/folder",\n  "gateway": "https://space.snapwork.ai",\n  "roomId": "%s",\n  "agentId": "%s",\n  "key": "testkeyrel"\n}\n' "$S2" "$R9" "00000000-0000-4000-8000-0000000000c9" > "$SW/rooms/$R9.00000000-0000-4000-8000-0000000000c9.json"
+printf '{\n  "session": "%s",\n  "app": "claude",\n  "copy": "1",\n  "project": "%s",\n  "gateway": "https://space.snapwork.ai",\n  "roomId": "%s",\n  "agentId": "%s",\n  "key": "testkeycopy"\n}\n' "$S2" "$P1" "$R9" "00000000-0000-4000-8000-0000000000d9" > "$SW/rooms/$R9.00000000-0000-4000-8000-0000000000d9.json"
+chmod 600 "$SW"/rooms/*.json
+S9=99999999-aaaa-4000-8000-000000000099
+mkdir -p "$HOMEDIR/proj9"
+connect "$S9" "$(transcript "$S9")" "$HOMEDIR/proj9" kfr-cccc-0090
+has "connected" "connected."
+called "the chats already in rooms are claimed" "claim"
+check "a chat that joined while the computer was not connected is claimed now" 'grep -q "\"home\":\"$(home_id "$P3")\"" "$T/fake/claim_bodies"'
+check "never a relative folder" '! grep -q "testkeyrel" "$T/fake/claim_bodies"'
+check "for the old room's chat and folder" 'grep -q "\"agent_key\":\"testkeyold9\",\"home\":\"$HID1\"" "$T/fake/claim_bodies"'
+check "never another host's key" '! grep -q "testkeyevil" "$T/fake/claim_bodies"'
+check "never a copy started by an add" '! grep -q "testkeycopy" "$T/fake/claim_bodies"'
+not_called "no key on the command line" "KEY-IN-ARGV"
+reset
+connect "$S9" "$(transcript "$S9")" "$HOMEDIR/proj9" kfr-cccc-0091
+not_called "a second connect claims nothing again" "claim"
+
+echo "== 10f2. already yours (200): marked claimed, but no folder home is made"
+reset
+P10=$HOMEDIR/proj10
+mkdir -p "$P10"
+S10=10101010-aaaa-4000-8000-000000000010
+printf 'kfr-aaaa-0010|aaaaaaaa-0000-4000-8000-000000000010|Space 10\n' >> "$T/fake/spaces"
+printf '200' > "$T/fake/claim_status"
+run prompt "$(prompt "$S10" "$(transcript "$S10")" "$P10" "${INVITE}kfr-aaaa-0010")"
+called "claimed" "claim"
+check "no folder home for an agent that was already the person's" '[ ! -f "$SW/homes/$(home_id "$P10").json" ]'
+check "but its connection is marked, so it is not asked again" 'grep -q "\"claimed\": \"$(home_id "$P10")\"" "$SW"/rooms/aaaaaaaa-0000-4000-8000-000000000010.*.json'
+
+echo "== 10f3. a claim records Claude's own command, even from a Codex chat"
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/codex" && chmod 755 "$T/bin/codex"
+runner=$(env PATH="$T/bin:/usr/bin:/bin" APP=codex GATEWAY=https://space.snapwork.ai SNAPWORK_HOME="$SW" ${TEST_SH:-sh} -c '. "$1"; claim_runner' sh "$(dirname "$PLUGIN")/snapwork-connect.sh")
+check "the runner is claude, not the connecting chat's app" '[ "$runner" = "$T/bin/claude" ]'
+rm -f "$T/bin/codex"
+
+echo "== 10g. the watcher starts a fresh chat for a folder home (no copy)"
+reset
+printf 'start\t%s\tclaude-code\t%s\t%s\tRoom B\tfolder\n' "$ADD1" "$HID2" "${INVITE}kfr-bbbb-0002" > "$T/fake/work_lines"
+watch
+check "one fresh chat" '[ "$(wc -l < "$T/fake/claude_calls" | tr -d " ")" = 1 ]'
+check "in the folder" 'grep -q "^cwd=$P2 " "$T/fake/claude_calls"'
+check "the fresh chat command, exactly (no --resume)" 'grep -q -F " |--bg |--name |Room B |${INVITE}kfr-bbbb-0002" "$T/fake/claude_calls" && ! grep -q -F "resume" "$T/fake/claude_calls"'
+called "reported started" "report $ADD1 {\"state\":\"started\",\"session_id\":\"$FORK_ID\"}"
+reset
+printf 'start\t%s\tclaude-code\t%s\t%s\tRoom B\tchat\n' "$ADD1" "$S1" "${INVITE}kfr-bbbb-0002" > "$T/fake/work_lines"
+watch
+check "a chat home with the 7th field is forked as before" 'grep -q -F " |--resume |$S1 |--fork-session |--bg |--name |Room B |" "$T/fake/claude_calls"'
+
+echo "== 10h. folder home refusals"
+reset
+printf 'start\t%s\tclaude-code\t%s\t%s\tRoom B\tfolder\n' "$ADD1" "$S1" "${INVITE}kfr-bbbb-0002" > "$T/fake/work_lines"
+watch
+called "a chat home named as a folder home is refused" "report $ADD1 {\"state\":\"failed\",\"failure\":\"home_gone\"}"
+check "nothing started" '[ ! -f "$T/fake/claude_calls" ]'
+reset
+printf 'start\t%s\tclaude-code\t%s\t%s\tRoom B\tchat\n' "$ADD1" "$HID2" "${INVITE}kfr-bbbb-0002" > "$T/fake/work_lines"
+watch
+called "a folder home named as a chat is refused (an old watcher's view)" "report $ADD1 {\"state\":\"failed\",\"failure\":\"home_gone\"}"
+reset
+HIDX=12345678-1234-1234-1234-123456789abc
+printf '{\n  "kind": "folder",\n  "home": "%s",\n  "project": "relative/proj"\n}\n' "$HIDX" > "$SW/homes/$HIDX.json"
+printf 'start\t%s\tclaude-code\t%s\t%s\tRoom B\tfolder\n' "$ADD1" "$HIDX" "${INVITE}kfr-bbbb-0002" > "$T/fake/work_lines"
+watch
+called "a relative folder is refused" "report $ADD1 {\"state\":\"failed\",\"failure\":\"home_gone\"}"
+reset
+printf '{\n  "kind": "folder",\n  "home": "%s",\n  "project": "%s/gone"\n}\n' "$HIDX" "$HOMEDIR" > "$SW/homes/$HIDX.json"
+watch
+called "a missing folder is refused" "report $ADD1 {\"state\":\"failed\",\"failure\":\"home_gone\"}"
+check "nothing started for them" '[ ! -f "$T/fake/claude_calls" ]'
+check "the watcher says it is 0.3.2" 'grep -q "^VERSION=0.3.2$" "$SW/snapwork-watch.sh"'
+check "the connect script and the watcher name the same version" '[ "$(sed -n "s/^WATCH_VERSION=//p" "$SCRIPTS/snapwork-connect.sh")" = "$(sed -n "s/^VERSION=//p" "$SCRIPTS/snapwork-watch.sh")" ]'
+
 echo "== 9. logs keep no keys, codes or invitations"
 check "watch log mode 600" '[ "$(ls -l "$SW/watch.log" | cut -c 1-10)" = "-rw-------" ]'
 check "watch log: no key" '! grep -q "swc_" "$SW/watch.log"'
 check "watch log: no invitation" '! grep -q "kfr-" "$SW/watch.log"'
 check "plugin log: no connect code" '! grep -q "kfr-cccc" "$SW/plugin.log"'
 check "plugin log: no key" '! grep -q "swc_" "$SW/plugin.log"'
+check "plugin log: no agent key" '! grep -q "testkey" "$SW/plugin.log"'
+check "watch log: no agent key" '! grep -q "testkey" "$SW/watch.log"'
 
 printf '\nmy agents: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

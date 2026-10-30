@@ -14,6 +14,7 @@
 #   msg_<room>      the next hook read answers 200 with this text (text/plain), then it is gone
 #   sayfail_<room>  a say answers 403 (the member has not said hello yet)
 # A say is logged as "say <room>" and its body kept in said_<room>; a join's body in join_body.
+# A claim (7.6) is logged as "claim", its body appended to claim_bodies; claim_status forces a status.
 set -u
 out=
 wfmt=
@@ -143,6 +144,13 @@ case $url in
     [ ! -e "$FAKE_DIR/lookup_status" ] || answer "$(cat "$FAKE_DIR/lookup_status")" '{"error":{"code":"X","message":"x"}}'
     rt=$(cat "$FAKE_DIR/lookup_runtime" 2> /dev/null || echo claude-code)
     answer 200 "{\"account\":{\"name\":\"Minh Vo\",\"email\":\"m•••@example.com\"},\"runtime\":\"$rt\",\"expires_at\":1}" ;;
+  */computer/claims)
+    # 7.6: a claim. The body comes from a private file (@path), never argv; claim_status forces
+    # an answer. Each body is appended to claim_bodies.
+    echo "claim" >> "$FAKE_DIR/calls"
+    case $data in @*) cat "${data#@}" >> "$FAKE_DIR/claim_bodies"; echo >> "$FAKE_DIR/claim_bodies" ;; esac
+    [ ! -e "$FAKE_DIR/claim_status" ] || answer "$(cat "$FAKE_DIR/claim_status")" '{"error":{"code":"X","message":"x"}}'
+    answer 201 '{"claimed":true,"person_agent":{"id":"bbbbbbbb-1111-4000-8000-000000000001","name":"Claude"}}' ;;
   */computer/work/*)
     echo "report ${url##*/} $data" >> "$FAKE_DIR/calls"
     answer 200 '{"add":{}}' ;;

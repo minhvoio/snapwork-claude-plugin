@@ -491,6 +491,8 @@ join() {
     printf '{\n'
     printf '  "session": "%s",\n' "$SID"
     printf '  "app": "%s",\n' "$APP"
+    # A copy started by an add is already its person's agent: the connect sweep skips it (M7.6).
+    [ "$FORK" -ne 1 ] || printf '  "copy": "1",\n'
     printf '  "setup": "%s",\n' "$SETUP_ID"
     printf '  "project": "%s",\n' "$CWD"
     printf '  "gateway": "%s",\n' "$GATEWAY"
@@ -514,6 +516,8 @@ join() {
   if [ "$FORK" -eq 1 ]; then plog "join-copy room=$(printf '%s' "$ROOM" | cut -c 1-8) from=$(printf '%s' "$PARENT" | cut -c 1-8)"
   else plog "join-first room=$(printf '%s' "$ROOM" | cut -c 1-8)"
   fi
+  # 7.6: on a connected computer the agent becomes its person's (a copy started by an add already is).
+  [ "$FORK" -eq 1 ] || claim_state "$STATE"
   joined_text "$space_name" "$agent_name"
   auto_update_say
 }

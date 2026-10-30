@@ -23,14 +23,23 @@
 # next one. The computer key goes to curl through its config on stdin, never on a command line, and
 # is never printed or logged.
 #
-# Uses from snapwork-plugin.sh: GATEWAY, APP, AGENT_FOR, SID, CWD, HOME_REAL, SNAPWORK_HOME, HERE, WORK,
-# STATE, work_dir, plog, safe, field, pick, try_adopt, space_of.
+# Claims (7.6): a chat on a connected computer that joins a room by invitation becomes the person's
+# agent, proven by its agent key next to this computer's key. Its home is then its project folder,
+# not the chat: homes/<home id>.json ("kind": "folder", the id from the folder's path, no
+# "session"), and adding it to another room starts a fresh chat there (a copy of a chat in a room
+# would carry that room's talk). A connect also claims, once each, the chats on this computer that
+# are already in rooms. The claim's body (with the agent key) goes to curl from a private file and
+# the computer key through curl's config on stdin: neither is ever on a command line or in a log.
+#
+# Uses from snapwork-plugin.sh: GATEWAY, ALT_GATEWAY, APP, AGENT_FOR, SID, CWD, HOME_REAL,
+# SNAPWORK_HOME, HERE, WORK, STATE, ROOMS, work_dir, plog, safe, field, pick, try_adopt, space_of,
+# sha_of, set_line, app_of, valid_agent.
 
 CONNECT_URL=$GATEWAY/c/
 COMPUTER_FILE=$SNAPWORK_HOME/computer.json
 HOMES=$SNAPWORK_HOME/homes
 WATCH_SCRIPT=$SNAPWORK_HOME/snapwork-watch.sh
-WATCH_VERSION=0.3.0
+WATCH_VERSION=0.3.2
 WATCH_LABEL=ai.snapwork.watch
 WATCH_NOTE=
 PENDING=$SNAPWORK_HOME/connect-pending
@@ -57,6 +66,11 @@ runner_path() {
   case $r in /*) ;; *) return 0 ;; esac
   case $r in *'"'* | *\\* | *[[:cntrl:]]*) return 0 ;; esac
   printf '%s' "$r"
+}
+
+# A claimed folder home is started with Claude Code's own command, whatever app connected (M7.6).
+claim_runner() {
+  (APP=claude && runner_path)
 }
 
 # The chat's PATH with only absolute folders: an empty or relative entry would look tools up in
@@ -138,10 +152,104 @@ on_connect() {
   write_owner_only "$HOMES/$SID.json" "$(printf '{\n  "session": "%s",\n  "app": "%s",\n  "project": "%s",\n  "agentId": "%s",\n  "agentName": "%s",\n  "runner": "%s",\n  "path": "%s"\n}\n' \
     "$SID" "$APP" "$CWD" "$agent_id" "$agent_name" "$(runner_path)" "$chat_path")" || connect_fail "cannot save this chat as the home" no-save
   install_watcher
+  claim_all
   plog "connected agent=$(printf '%s' "$agent_id" | cut -c 1-8) watcher=$WATCH_NOTE"
   printf 'SnapWork: connected. This chat is now the home of "%s" on this computer. From My agents in the SnapWork console, add "%s" to any room you are in: each room gets its own copy of this chat, started in the background, and this chat stays as it is.%s Tell the person this in one line.\n' \
     "$agent_name" "$agent_name" "$(watch_note_text)"
   exit 0
+}
+
+# ---- claims (7.6) ----
+
+# home_id_of <absolute folder>: the first 32 hex digits of the path's sha256, as a UUID.
+home_id_of() {
+  hh=$(printf '%s' "$1" | sha_of 2> /dev/null) || hh=
+  [ -n "$hh" ] || hh=$(printf '%s' "$1" | openssl dgst -sha256 2> /dev/null | sed 's/.*= *//')
+  hh=$(printf '%s' "$hh" | cut -c 1-32 | tr 'A-F' 'a-f')
+  case $hh in *[!0-9a-f]*) return 1 ;; esac
+  [ "${#hh}" -eq 32 ] || return 1
+  printf '%s-%s-%s-%s-%s' "$(printf '%s' "$hh" | cut -c 1-8)" "$(printf '%s' "$hh" | cut -c 9-12)" \
+    "$(printf '%s' "$hh" | cut -c 13-16)" "$(printf '%s' "$hh" | cut -c 17-20)" "$(printf '%s' "$hh" | cut -c 21-32)"
+}
+
+# claim_state <room connection file>: makes that room's agent this computer's person's agent, with
+# its project folder as its home. Silent on stdout (the hook's output goes to the chat); never
+# fails the caller. Marks the connection "claimed" once SnapWork has answered for good.
+claim_state() {
+  cl_state=$1
+  { [ -f "$COMPUTER_FILE" ] && [ ! -L "$COMPUTER_FILE" ]; } || return 0
+  { [ -f "$cl_state" ] && [ ! -L "$cl_state" ]; } || return 0
+  [ -z "$(field claimed "$cl_state")" ] || return 0
+  # Claude Code only for now (Codex comes with 7.4); this gateway's connections only.
+  [ "$(app_of "$cl_state")" = claude ] || return 0
+  cl_gw=$(field gateway "$cl_state")
+  [ "$cl_gw" = "$GATEWAY" ] || [ "$cl_gw" = "$ALT_GATEWAY" ] || return 0
+  cl_project=$(field project "$cl_state")
+  case $cl_project in /*) ;; *) return 0 ;; esac
+  case $cl_project in *'"'* | *\\* | *[[:cntrl:]]*) return 0 ;; esac
+  [ -d "$cl_project" ] || return 0
+  [ "$cl_project" != "$HOME_REAL" ] || return 0
+  cl_akey=$(field key "$cl_state")
+  case $cl_akey in '' | *[!A-Za-z0-9._~+/=-]*) return 0 ;; esac
+  cl_ckey=$(field key "$COMPUTER_FILE")
+  case $cl_ckey in swc_*) ;; *) return 0 ;; esac
+  case $cl_ckey in *[!A-Za-z0-9_-]*) return 0 ;; esac
+  cl_home=$(home_id_of "$cl_project") || { plog "claim-skip why=no-sha"; return 0; }
+  cl_folder=$(basename -- "$cl_project" | tr -d '"\\' | tr -d '[:cntrl:]')
+  command -v curl > /dev/null 2>&1 || return 0
+  work_dir || return 0
+  cl_body=$WORK/claim-body.json
+  (umask 077 && printf '{"agent_key":"%s","home":"%s","folder":"%s","runtime":"claude-code"}' \
+    "$cl_akey" "$cl_home" "$cl_folder" > "$cl_body") || return 0
+  cl_akey=
+  cl_status=$(printf 'header = "Authorization: Bearer %s"\n' "$cl_ckey" \
+    | curl -q -K - -sS --proto =https --max-time 15 -o "$WORK/claim.json" -w '%{http_code}' -X POST \
+      -H 'content-type: application/json' --data-binary "@$cl_body" "$GATEWAY/computer/claims" 2> /dev/null) \
+    || cl_status=000
+  cl_ckey=
+  rm -f "$cl_body"
+  case $cl_status in
+    201)
+      plog "claim-ok status=201"
+      # The folder home the watcher starts fresh chats from (only the folder; never a chat).
+      [ -f "$HOMES/$cl_home.json" ] || {
+        (umask 077 && mkdir -p "$HOMES") 2> /dev/null
+        write_owner_only "$HOMES/$cl_home.json" "$(printf '{\n  "kind": "folder",\n  "home": "%s",\n  "app": "claude",\n  "project": "%s",\n  "runner": "%s",\n  "path": "%s"\n}\n' \
+          "$cl_home" "$cl_project" "$(claim_runner)" "$(absolute_path)")" || plog "claim-home-not-saved"
+      }
+      set_line "$cl_state" claimed "$cl_home" || true
+      refresh_watcher ;;
+    200)
+      # Already this person's agent (a copy, or claimed before): nothing to keep here.
+      plog "claim-already status=200"
+      set_line "$cl_state" claimed "$cl_home" || true ;;
+    404 | 409 | 422)
+      # Final answers: not this person's to claim, or not a Claude Code agent. Never asked again.
+      plog "claim-refused status=$cl_status"
+      set_line "$cl_state" claimed refused || true ;;
+    *)
+      plog "claim-refused status=$cl_status" ;;
+  esac
+  return 0
+}
+
+# refresh_watcher: a computer connected with an older plugin still runs that watcher's copy, which
+# cannot start a folder home: after a claim, put this plugin's watcher in its place (and restart it).
+refresh_watcher() {
+  [ -f "$WATCH_SCRIPT" ] && [ ! -L "$WATCH_SCRIPT" ] || return 0
+  [ "$(sed -n 's/^VERSION=//p' "$WATCH_SCRIPT" | head -n 1)" != "$WATCH_VERSION" ] || return 0
+  install_watcher
+  plog "watcher-refreshed to=$WATCH_VERSION note=$WATCH_NOTE"
+}
+
+# claim_all: after a connect, the chats on this computer that are already in rooms, once each.
+claim_all() {
+  for cl_f in "$ROOMS"/*.json; do
+    { [ -f "$cl_f" ] && [ ! -L "$cl_f" ]; } || continue
+    [ "$(field copy "$cl_f")" != 1 ] || continue
+    claim_state "$cl_f"
+  done
+  return 0
 }
 
 watch_note_text() {
