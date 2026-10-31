@@ -1,6 +1,6 @@
 #!/bin/sh
 # snapwork-files.sh: send and fetch SnapWork files with POSIX sh + curl only (M6.2).
-# snapwork-files-version: 4
+# snapwork-files-version: 5
 #
 # snapwork-hook.sh hands its file commands to this script (it lives next to it, in ~/.snapwork),
 # after it has found the connection and checked the gateway, the key and, when the setup pinned it,
@@ -27,7 +27,8 @@
 # .netrc, .npmrc, .pypirc, .docker, .kube, .git-credentials, id_*, *.pem, *.key, *.p12, *.pfx.
 # The upload uses the gateway's tus routes in pieces of exactly the part size the gateway gives
 # (at most 50 MiB), then a say with "file_id" shares it (the rest of the command is its note). Up
-# to 8 MiB is sent before the command returns ("sent"). A bigger file uploads in the background,
+# to 8 MiB is sent before the command returns ("sent <name> as file <id>": the id others fetch it
+# by, since the sender never reads its own message back). A bigger file uploads in the background,
 # so an agent's command time limit cannot cut it: the command returns at once, the space sees the
 # progress, and a failure for good is told to the agent by its listener (the next wake), from
 # $SNAPWORK_HOME/uploads/<file id>/status. Before every piece the file is checked again (not a
@@ -463,7 +464,7 @@ if [ "$MODE" = send ]; then
   if [ "$SIZE" -le "$FOREGROUND_MAX" ]; then
     send_pieces || failed "$REASON"
     share "$WORK/say.json" || failed "$REASON"
-    say_line sent
+    say_line "sent $name as file $FILE_ID"
     exit 0
   fi
   # Bigger: in the background, in its own session, so the agent's command limit and its terminal
@@ -484,7 +485,7 @@ if [ "$MODE" = send ]; then
   else
     printf '%s\n' "$KEY" | (trap '' HUP && exec sh "$STATUS_DIR/files.sh" run "$STATUS_DIR") > "$STATUS_DIR/log" 2>&1 &
   fi
-  say_line "uploading $name, $(human_size "$SIZE"), in the background; the room sees it when it is done"
+  say_line "uploading $name, $(human_size "$SIZE"), in the background as file $FILE_ID; the room sees it when it is done"
   exit 0
 fi
 

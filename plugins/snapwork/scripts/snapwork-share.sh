@@ -5,8 +5,9 @@
 # ~/.snapwork/snapwork-hook.sh and snapwork-files.sh are the paths every SnapWork text names. Each
 # carries a "# snapwork-<name>-version: N" line; this plugin puts its own copies there when one is
 # missing or older (new files moved into place, so a listener running the old one is not
-# disturbed), both or neither. Neither while a connection of the one-line setup pins them by hash
-# ("hookSha"): then the texts say to run the setup line again to get file sending.
+# disturbed), both or neither. A connection of the one-line setup pins them by hash ("hookSha",
+# "filesSha"): it gets the new hashes in the same step, as running the setup again would. Only when
+# a pin cannot be rewritten are both kept, and the texts say to run the setup line again.
 #
 # Codex has no network in its sandbox, so the Stop hook does the file work for it:
 #   ```snapwork            sends that file from the project folder; the rest of the block is its note
@@ -46,7 +47,7 @@ send_to_space() {
     codex_block_rules
   else
     printf 'Post it once with: sh ~/.snapwork/snapwork-hook.sh --say %s -- \047<text>\047 (single-quote the text and write any \047 inside it as \047\134\047\047). Never put secrets, keys, tokens or environment values in it. ' "$(say_args)"
-    printf 'To send a file (when they say "send this file" or name one), add --file \047<path inside this folder>\047 right before --, and the text becomes its note; a file over 50 MB uploads in the background. ' 
+    printf 'To send a file (when they say "send this file" or name one), add --file \047<path inside this folder>\047 right before --, and the text becomes its note; a file over 50 MB uploads in the background. It prints the file id (sent <name> as file <id>): give that id to whoever should fetch it. ' 
   fi
   kit_stale_note
   printf 'If you cannot tell what to send, ask the person instead of posting. Once posted, tell them in one line.\n'
@@ -56,17 +57,25 @@ send_to_space() {
 # "# snapwork-hook-version: 2" -> 2; no line -> 0.
 kit_version() { sed -n 's/^# snapwork-[a-z]*-version: \([0-9][0-9]*\)$/\1/p' "$1" 2> /dev/null | head -n 1 | grep . || printf '0'; }
 
-# KIT_STALE=1 when ~/.snapwork holds older scripts that a setup pin keeps this plugin from replacing.
+# KIT_STALE=1 when ~/.snapwork keeps older scripts because a setup pin could not take the new hashes.
 KIT_STALE=0
+# Each connection of the one-line setup checks both scripts by hash ("hookSha", "filesSha"): it gets
+# the staged copies' hashes in a staged state of its own, as running the setup again would (a state
+# not in the setup's shape is skipped, as the setup skips it). Fails when one cannot be staged; then
+# nothing is moved. Run in a subshell: noclobber keeps a staged name from following a planted link.
+stage_pins() {
+  set -C
+  hook_sha=$(sha_of < "$SNAPWORK_HOME/snapwork-hook.sh.$$.tmp") && [ -n "$hook_sha" ] || return 1
+  files_sha=$(sha_of < "$SNAPWORK_HOME/snapwork-files.sh.$$.tmp") && [ -n "$files_sha" ] || return 1
+  for pin in $(grep -l '"hookSha"' "$ROOMS"/*.json 2> /dev/null); do
+    [ "$(head -n 1 "$pin")" = "{" ] || continue
+    { printf '{\n  "hookSha": "%s",\n  "filesSha": "%s",\n' "$hook_sha" "$files_sha"
+      sed -e '1d' -e '/^[[:space:]]*"hookSha"[[:space:]]*:/d' -e '/^[[:space:]]*"filesSha"[[:space:]]*:/d' "$pin"; } \
+      > "$pin.$$.tmp" 2> /dev/null && chmod 600 "$pin.$$.tmp" || return 1
+  done
+}
 refresh_kit() {
   (umask 077 && mkdir -p "$SNAPWORK_HOME") 2> /dev/null || return 0
-  if grep -q -l '"hookSha"' "$ROOMS"/*.json 2> /dev/null; then
-    for f in snapwork-hook.sh snapwork-files.sh; do
-      if [ ! -e "$SNAPWORK_HOME/$f" ] || [ "$(kit_version "$HERE/$f")" -gt "$(kit_version "$SNAPWORK_HOME/$f")" ]; then KIT_STALE=1; fi
-    done
-    [ "$KIT_STALE" -eq 0 ] || plog "kit-refresh-skip why=setup-pin"
-    return 0
-  fi
   # Both or neither: nothing when either target is a link or newer, or one copy cannot be staged.
   older=0
   for f in snapwork-hook.sh snapwork-files.sh; do
@@ -82,9 +91,22 @@ refresh_kit() {
     (umask 077 && cp "$HERE/$f" "$SNAPWORK_HOME/$f.$$.tmp" && chmod 500 "$SNAPWORK_HOME/$f.$$.tmp") 2> /dev/null \
       || { rm -f "$SNAPWORK_HOME"/snapwork-*.sh.$$.tmp; return 0; }
   done
+  (umask 077 && stage_pins) || {
+    rm -f "$SNAPWORK_HOME"/snapwork-*.sh.$$.tmp "$ROOMS"/*.json.$$.tmp
+    KIT_STALE=1
+    plog "kit-refresh-skip why=setup-pin"
+    return 0
+  }
   for f in snapwork-hook.sh snapwork-files.sh; do
     mv -f "$SNAPWORK_HOME/$f.$$.tmp" "$SNAPWORK_HOME/$f" 2> /dev/null && plog "kit-refresh $f"
   done
+  pins=0
+  missed=0
+  for staged in "$ROOMS"/*.json.$$.tmp; do
+    [ -f "$staged" ] || continue
+    if mv -f "$staged" "${staged%.$$.tmp}" 2> /dev/null; then pins=$((pins + 1)); else missed=$((missed + 1)); fi
+  done
+  [ "$pins" -eq 0 ] && [ "$missed" -eq 0 ] || plog "kit-repin pins=$pins missed=$missed"
   return 0
 }
 kit_stale_note() {
@@ -142,11 +164,17 @@ codex_file_block() {
       result=$(files_run send --file "$path" --note-json "$WORK/rest") \
         || codex_not_posted attach-failed "the file was not sent: ${result#failed: }"
       plog "codex-attach $(printf '%s' "$result" | cut -c 1-9)"
-      if [ "$result" = sent ]; then
-        printf 'SnapWork: your file %s was sent to the room with its note. Tell the person in one line; post no block about it.\n' "$path" >&2
-      else
-        printf 'SnapWork: %s (your file %s, with its note). Tell the person in one line; post no block about it.\n' "$result" "$path" >&2
-      fi
+      case $result in
+        'sent '*' as file '*)
+          printf 'SnapWork: your file %s was sent to the room with its note, as file %s (others fetch it by that id). Tell the person in one line; post no block about it.\n' "$path" "${result##* as file }" >&2
+          ;;
+        sent)
+          printf 'SnapWork: your file %s was sent to the room with its note. Tell the person in one line; post no block about it.\n' "$path" >&2
+          ;;
+        *)
+          printf 'SnapWork: %s (your file %s, with its note). Tell the person in one line; post no block about it.\n' "$result" "$path" >&2
+          ;;
+      esac
       codex_continued
       exit 2
       ;;

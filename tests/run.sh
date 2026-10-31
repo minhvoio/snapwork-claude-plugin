@@ -1077,22 +1077,51 @@ mkdir -p "$P9"
 printf '{"type":"session_meta","payload":{"id":"%s","session_id":"%s","cwd":"%s"}}\n' "$C9" "$C9" "$P9" > "$CX9"
 run_cx prompt "$(cx_prompt "$C9" "$CX9" "$P9" "${LINK}kfr-yyyy-0001")"
 has "Codex is told how to attach a file" "make the first line of the block attach: <its path in this folder>"
-# an older helper and hook are replaced on the next start, but the hook only while no
-# connection of the one-line setup checks it by hash
+# an older helper and hook are replaced on the next start; a connection of the one-line setup
+# that checks them by hash gets the new hashes with them, as running the setup again would
+sha_file() { { sha256sum < "$1" || shasum -a 256 < "$1"; } 2> /dev/null | cut -d ' ' -f 1; }
+pins_are() { for f in $(grep -l '"hookSha"' "$SW"/rooms/*.json); do grep -q -x -F "  \"$1\": \"$2\"," "$f" || return 1; done; }
 chmod 700 "$SW/snapwork-files.sh" "$SW/snapwork-hook.sh"
 printf '#!/bin/sh\n# snapwork-files-version: 0\n' > "$SW/snapwork-files.sh"
 printf '#!/bin/sh\necho old hook\n' > "$SW/snapwork-hook.sh"
 check "the setup's pinned connections are there (section 13)" 'grep -q -l "\"hookSha\"" "$SW"/rooms/*.json'
+PINNED=$SW/rooms/$ROOM_S.$SET_AGENT.json
+cp "$PINNED" "$T/pinned.before"
+# pins that cannot take the new hashes (a folder it may not write) stop both scripts
+chmod 500 "$SW/rooms"
 run_cx start "$(cx_start "$C9" "$CX9" "$P9" resume)"
-check "while the setup pins them, neither script is replaced" 'grep -q "old hook" "$SW/snapwork-hook.sh" && grep -q "version: 0" "$SW/snapwork-files.sh"'
+chmod 700 "$SW/rooms"
+check "while a pin cannot be rewritten, neither script is replaced" 'grep -q "old hook" "$SW/snapwork-hook.sh" && grep -q "version: 0" "$SW/snapwork-files.sh"'
 has "and the chat is told how to get file sending" "run the setup line again to get file sending"
-mkdir -p "$T/setup-keep"
-for f in $(grep -l '"hookSha"' "$SW"/rooms/*.json); do mv "$f" "$T/setup-keep/"; done
+check "and no pin is changed" 'cmp -s "$T/pinned.before" "$PINNED"'
+check "no staged copies are left" '! ls "$SW" | grep -q "tmp" && ! ls "$SW/rooms" | grep -q "tmp"'
+# a pinned state not in the setup's shape is left as it is and blocks no one
+BADPIN=$SW/rooms/$ROOM_Y.00000000-0000-4000-8000-0000000000cc.json
+printf '  "hookSha": "abc"\n' > "$BADPIN"
 run_cx start "$(cx_start "$C9" "$CX9" "$P9" resume)"
-mv "$T/setup-keep"/*.json "$SW/rooms/"
-lacks "with no pin, nothing to tell" "run the setup line again"
-check "with no pin, an older file helper is replaced" 'cmp -s "$SCRIPTS/snapwork-files.sh" "$SW/snapwork-files.sh"'
+check "an odd pinned state is left as it is" '[ "$(cat "$BADPIN")" = "  \"hookSha\": \"abc\"" ]'
+rm -f "$BADPIN"
+lacks "with the pins rewritten, nothing to tell" "run the setup line again"
+check "an older file helper is replaced while the setup pins it" 'cmp -s "$SCRIPTS/snapwork-files.sh" "$SW/snapwork-files.sh"'
 check "and the older hook with it" 'cmp -s "$SCRIPTS/snapwork-hook.sh" "$SW/snapwork-hook.sh"'
+check "each pinned connection carries the new hook's hash" 'pins_are hookSha "$(sha_file "$SW/snapwork-hook.sh")"'
+check "and the file helper's (a pin from before files gets one)" 'pins_are filesSha "$(sha_file "$SW/snapwork-files.sh")"'
+check "the rest of the connection is kept" 'grep -v "Sha\"" "$T/pinned.before" > "$T/p1" && grep -v "Sha\"" "$PINNED" > "$T/p2" && cmp -s "$T/p1" "$T/p2"'
+check "still owner-only" '[ "$(ls -l "$PINNED" | cut -c 1-10)" = "-rw-------" ]'
+check "no staged pins are left after it" '! ls "$SW/rooms" | grep -q "tmp"'
+check "the log says the pins moved" 'grep -q "kit-repin pins=" "$SW/plugin.log"'
+# the setup's listener, in its folder, runs the hook it now names: no hash mismatch
+pinned_hook() {
+  (cd "$P3" && printf '{}' | env HOME="$HOMEDIR" SNAPWORK_HOME="$SW" PATH="$T/bin:$PATH" FAKE_DIR="$T/fake" \
+    sh "$SW/snapwork-hook.sh" --event SessionStart --room "$ROOM_S" --agent "$SET_AGENT" > "$T/out" 2>&1)
+}
+pinned_hook
+lacks "the pinned hook accepts its new bytes" "does not match the one SnapWork installed"
+cp "$PINNED" "$T/pinned.after"
+sed 's/"hookSha": "[0-9a-f]*"/"hookSha": "abc"/' "$T/pinned.after" > "$PINNED"
+pinned_hook
+has "(a wrong pin would be caught there)" "does not match the one SnapWork installed"
+cp "$T/pinned.after" "$PINNED"
 # both or neither: a target that is a link stops both
 chmod 700 "$SW/snapwork-hook.sh" "$SW/snapwork-files.sh"
 printf '#!/bin/sh\necho old hook\n' > "$SW/snapwork-hook.sh"
@@ -1145,7 +1174,7 @@ STUB
 KEEP_PLUGIN=$PLUGIN
 PLUGIN=$T/plug/snapwork-plugin.sh
 reset_calls
-echo "sent" > "$T/fake/files_reply"
+echo "sent report v2.pdf as file kq3-mzqt-wpxh" > "$T/fake/files_reply"
 run_cx stop "$(cx_stop "$C9" "$CX9" "$P9" turn-f1 '"Done.\n```snapwork\nattach: out/report v2.pdf\nHere it is, \"v2\".\n```"')"
 check "attach: hands the file to the helper" 'grep -q -F -- "send --gateway https://space.snapwork.ai --room $ROOM_Y --agent " "$T/fake/files_args" && grep -q -F -- "--file out/report v2.pdf --note-json" "$T/fake/files_args"'
 check "the rest of the block is its note, still JSON-escaped" '[ "$(cat "$T/fake/files_note")" = "Here it is, \\\"v2\\\"." ]'
@@ -1154,6 +1183,7 @@ check "from the project folder" '[ "$(cat "$T/fake/files_cwd")" = "$P9" ]'
 not_called "the block is not posted as text" "say $ROOM_Y"
 check "a sent file continues the chat (exit 2)" '[ "$(cat "$T/rc")" = 2 ]'
 err_has "and says it was sent" "SnapWork: your file out/report v2.pdf was sent to the room with its note"
+err_has "with the id others fetch it by" "as file kq3-mzqt-wpxh (others fetch it by that id)"
 echo "failed: only files inside your project folder ($P9) can be sent: copy it into the project folder first" > "$T/fake/files_reply"
 run_cx stop "$(cx_stop "$C9" "$CX9" "$P9" turn-f2 '"```snapwork\nattach: ../secret.txt\n```"')"
 check "a refused file continues the chat (exit 2)" '[ "$(cat "$T/rc")" = 2 ]'
